@@ -93,6 +93,8 @@ class DNSEService:
                 routing_key = payload.get("indexName")
             if not routing_key:
                 routing_key = payload.get("id")
+            if not routing_key:
+                routing_key = payload.get("indexId") # Fallback
             
             # Normalize
             if routing_key:
@@ -100,8 +102,19 @@ class DNSEService:
             
             # Trigger callback if exists
             if routing_key and routing_key in self.callbacks:
+                # print(f"🔹 Dispatching {routing_key}")
                 self.callbacks[routing_key](payload)
                 pass 
+            elif "index" in topic:
+                 # Debug: If index topic but no callback found?
+                 # Extract index id from topic? topic: .../index/VNINDEX
+                 try:
+                     parts = topic.split('/')
+                     idx_from_topic = parts[-1].upper()
+                     if idx_from_topic in self.callbacks:
+                         # print(f"🔹 topic-dispatch: {idx_from_topic}")
+                         self.callbacks[idx_from_topic](payload)
+                 except: pass 
                 
         except Exception as e:
             print(f"Message Error: {e}")
@@ -181,8 +194,13 @@ class DNSEService:
         for idx in indices:
             idx = idx.upper()
             # Register same callback for all
+            # Register same callback for all
             self.callbacks[idx] = callback
-            # print(f"🔹 Subscribed to Index: {idx}")
+            
+            # Subscribe
+            topic = f"plaintext/quotes/krx/mdds/index/{idx}"
+            self.client.subscribe(topic, qos=1)
+            # print(f"🔹 Subscribed to Index: {topic}")
 
     def register_shark_streams(self, ohlc_cb, tick_cb):
         """
@@ -202,9 +220,9 @@ class DNSEService:
             
         # Topic 1: OHLC Daily wildcard
         # Assuming the topic format allows wildcard at the end
-        topic_ohlc = "plaintext/quotes/krx/mdds/v2/ohlc/stock/1D/+"
-        self.client.subscribe(topic_ohlc, qos=0) # QoS 0 for speed/throughput on mass data
-        print(f"🦈 Subscribed to OHLC Stream: {topic_ohlc}")
+        # OHLC topic removed as per user request (Only 1-day realtime API)
+        # topic_ohlc = "plaintext/quotes/krx/mdds/v2/ohlc/stock/1D/+"
+        # self.client.subscribe(topic_ohlc, qos=0)
         
         # Topic 2: Real-time Stock Info wildcard
         # Using wildcard for symbol

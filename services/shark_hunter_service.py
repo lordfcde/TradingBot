@@ -1,10 +1,20 @@
 import json
 import os
-from datetime import datetime
+import threading
+import time
+from datetime import datetime, timedelta
 from services.watchlist_service import WatchlistService
 from data.stock_lists import VN100
 
 CONFIG_FILE = "scanner_config.json"
+STATS_FILE = "shark_stats.json"
+
+# Shark Cluster Constants
+SHARK_MIN_VAL = 1_000_000_000  # 1 Billion VND
+MIN_HIT_COUNT = 3              # 3 Hits to Trigger
+CLUSTER_TIMEOUT = 300          # 5 Minutes window
+ALERT_COOLDOWN = 1800          # 30 Minutes cooldown
+MAINTENANCE_INTERVAL = 60      # Check every minute
 
 class SharkHunterService:
     def __init__(self, bot):
@@ -15,10 +25,19 @@ class SharkHunterService:
         # Thread-safe Cache
         self.lock = threading.Lock()
         
-        # Architecture: market_state[symbol] = { 'avg_3m': ..., 'avg_5d': ..., 'trend_3m': ... }
-        self.market_state = {}
+        # Tracker State: {symbol: {'count', 'last_seen', 'last_alert'}}
+        self.shark_tracker = {}
         
-        print(f"🦈 Shark Hunter Service Initialized (RAM Mode). Alert Target: {self.alert_chat_id}")
+        # Statistics State: {symbol: {'buy_val': 0, 'sell_val': 0}}
+        self.shark_stats = {}
+        
+        # Load persisted stats
+        self._load_stats()
+        
+        self.last_maintenance = time.time()
+        self.last_reset_date = datetime.now().strftime("%Y-%m-%d")
+        
+        print(f"🦈 Shark Cluster Detector Initialized (Threshold: {SHARK_MIN_VAL/1e9}B, Hits: {MIN_HIT_COUNT})")
 
     def _load_config(self):
         try:
@@ -29,179 +48,181 @@ class SharkHunterService:
         except: pass
         return None
 
+    def _load_stats(self):
+        try:
+            path = os.path.join(os.path.dirname(os.path.dirname(__file__)), STATS_FILE)
+            if os.path.exists(path):
+                with open(path, 'r') as f:
+                    data = json.load(f)
+                    # Check if stale (Previous Day?)
+                    saved_date = data.get('date')
+                    current_date = datetime.now().strftime("%Y-%m-%d")
+                    
+                    # If date matches, load. Else start fresh.
+                    # Logic: User says reset at 8:30 AM.
+                    # If saved data is from yesterday, discard.
+                    if saved_date == current_date:
+                        self.shark_stats = data.get('stats', {})
+                        print(f"🔹 Loaded accumulated stats for {len(self.shark_stats)} symbols.")
+                    else:
+                        print("🔸 Stats file is directly from previous day. Starting fresh.")
+        except Exception as e:
+            print(f"Load Stats Error: {e}")
+
+    def _save_stats(self):
+        try:
+            path = os.path.join(os.path.dirname(os.path.dirname(__file__)), STATS_FILE)
+            with open(path, 'w') as f:
+                json.dump({
+                    "date": datetime.now().strftime("%Y-%m-%d"),
+                    "stats": self.shark_stats
+                }, f)
+        except Exception as e:
+            print(f"Save Stats Error: {e}")
+
     def set_alert_chat_id(self, chat_id):
         self.alert_chat_id = chat_id
-        # Save to config
         try:
             path = os.path.join(os.path.dirname(os.path.dirname(__file__)), CONFIG_FILE)
             with open(path, 'w') as f:
                 json.dump({"chat_id": chat_id}, f)
-        except Exception as e:
-            print(f"Error saving config: {e}")
+        except: pass
+        self.bot.send_message(chat_id, "🦈 **SHARK FILTER UPDATED**\nChế độ: Phát hiện Cụm Cá Mập (Shark Cluster)\nSẵn sàng săn mồi...", parse_mode='Markdown')
 
-        # Send confirmation
-        self.bot.send_message(chat_id, "🦈 **SHARK HUNTER ACTIVATED**\nĐang nạp dữ liệu từ luồng MQTT...", parse_mode='Markdown')
-
-    def process_ohlc(self, payload):
-        """
-        Processing Topic 1: OHLC Daily
-        Payload expectation: { "data": [ {...}, ... ], "symbol": "HPG" ... }
-        We need to calculate baseline metrics.
-        """
-        try:
-            symbol = payload.get("symbol")
-            if not symbol: return
+    def _do_maintenance(self):
+        """Periodic cleanup, saving, and reset logic"""
+        now = time.time()
+        if now - self.last_maintenance < MAINTENANCE_INTERVAL:
+            return
             
-            # FILTER: VN100 Only
-            if symbol not in VN100:
-                return
-            
-            # Check if payload has history (list) or single update
-            candles = payload.get("data", [])
-            
-            # Parsing Fix: If payload IS the data (dict) and no 'data' key
-            # Debug showed keys: ['time', 'open', 'close', 'volume', 'symbol', ...]
-            if not candles and isinstance(payload, dict) and "close" in payload:
-                candles = [payload]
-
-            if not candles: return
-
-            # Calculate Metrics
-            # Sort by time/date if needed? Assuming they are ordered or we sort.
-            # Usually OHLC is sorted. Desc or Asc? Let's assume generic.
-            
-            # For moving average calculations:
-            # We need Volume and Close Price.
-            
-            # Clean data extraction
-            closes = []
-            volumes = []
-            
-            for c in candles:
-                try:
-                    # Helper to parse flexible types (string or number)
-                    v_raw = c.get("volume") or c.get("accumulatedVolume") or 0
-                    cl_raw = c.get("close") or c.get("closePrice") or 0
-                    
-                    v = float(v_raw)
-                    cl = float(cl_raw)
-                    
-                    if cl > 0:
-                        closes.append(cl)
-                        volumes.append(v)
-                except: continue
-            
-            if not volumes: return
-
-            # If we only have 1 data point (Updates/Single Candle), we use it as Proxy Baseline
-            # User Criteria: AvgVol_3M > 50,000
-            
-            if len(volumes) < 5: 
-                # PROXY MODE: Use available data to establish baseline
-                # Use the single volume as "Avg"
-                avg_vol_5d = sum(volumes) / len(volumes)
-                avg_vol_3m = avg_vol_5d
-                trend_ok = True # Assume trend ok if unknown
-            else:
-                # Calculations
-                # 5D Avg
-                avg_vol_5d = sum(volumes[-5:]) / 5
+        with self.lock:
+            # 1. Cleanup Tracker (RAM)
+            expired = [k for k, v in self.shark_tracker.items() if now - v['last_seen'] > 7200]
+            for k in expired:
+                del self.shark_tracker[k]
                 
-                # 3M Avg (approx 60 candles)
-                lookback_3m = min(len(volumes), 60)
-                avg_vol_3m = sum(volumes[-lookback_3m:]) / lookback_3m
-                
-                # Trend 3M: Compare Last Close vs Close 60 days ago
-                last_close = closes[-1]
-                past_close = closes[-lookback_3m]
-                
-                trend_ok = False
-                if last_close > (past_close * 1.03):
-                    trend_ok = True
-                
-            # Filter 1: Check Health
-            if avg_vol_3m > 50000 and trend_ok:
-                with self.lock:
-                    self.market_state[symbol] = {
-                        'avg_3m': avg_vol_3m,
-                        'avg_5d': avg_vol_5d,
-                        'trend_ok': trend_ok,
-                        'last_update': time.time()
-                    }
-                # Optional: print(f"🦈 Baseline Loaded: {symbol}")
-
-        except Exception as e:
-            # print(f"OHLC Error: {e}")
-            pass
+            # 2. Check 08:30 AM Reset
+            dt_now = datetime.now()
+            today_str = dt_now.strftime("%Y-%m-%d")
+            
+            # If current time is > 08:30 AND we haven't reset for 'today' yet
+            # But wait, if we initialized AFTER 8:30, we verify date.
+            # If we run continuously overnight:
+            # At 08:30, we must clear stats.
+            
+            is_reset_time = (dt_now.hour == 8 and dt_now.minute >= 30) or (dt_now.hour > 8)
+            
+            if is_reset_time and self.last_reset_date != today_str:
+                print("🧹 **AUTO-RESET** (08:30 AM): Clearing Daily Stats...")
+                self.shark_stats.clear()
+                self.last_reset_date = today_str
+            
+            # 3. Save Stats
+            self._save_stats()
+        
+        self.last_maintenance = now
 
     def process_tick(self, payload):
         """
-        Processing Topic 2: Real-time Tick
+        Real-time Packet Processing
+        Logic: Cluster Detection (3 hits within 5 mins)
         """
-        if not self.alert_chat_id: return
-        
         try:
+            # Frequent Maintenance Check
+            self._do_maintenance()
+            
             symbol = payload.get("symbol")
-            if not symbol: return
-            
-            # FILTER: VN100 Only
-            if symbol not in VN100:
+            if not symbol:
                 return
-            
-            # 1. Get Baseline
-            baseline = None
-            with self.lock:
-                baseline = self.market_state.get(symbol)
-                
-            if not baseline:
-                # If no baseline, we IGNORE (safety filter)
-                return
-                
-            # 2. Extract Real-time Data
-            # "totalVol" in payload might be the accumulated volume of the day?
-            # User wrote: "Lấy totalVol so sánh với AvgVol_5D" -> This implies Day Volume Explosion
-            
-            total_vol = float(payload.get("totalVolumeTraded", 0))
-            last_price = float(payload.get("matchPrice", 0))
-            last_vol = float(payload.get("matchVolume", 0)) # Volume of *this* tick
+
+            # Parse Data
+            price = float(payload.get("matchPrice", 0))
+            vol = int(payload.get("matchVolume", 0)) 
+            total_vol = int(payload.get("totalVolumeTraded", 0))
             change_pc = float(payload.get("changedRatio", 0))
             
-            if total_vol == 0 or last_price == 0: return
-
-            # 3. Check Vol Explosion
-            # Condition: totalVol > (AvgVol_5D * 1.3) (User requested > 30% growth)
-            avg_5d = baseline['avg_5d']
-            if total_vol <= (avg_5d * 1.3):
+            if not (-6.5 <= change_pc <= 6.5):
                 return
                 
-            # ALL CONDITIONS MET! ALERT!
-            self.send_alert(symbol, total_vol, last_price, change_pc, baseline)
+            order_value = price * vol
             
+            if order_value < SHARK_MIN_VAL:
+                return
+                
+            # --- SHARK ORDER DETECTED ---
+            now = time.time()
+            
+            with self.lock:
+                if symbol not in self.shark_tracker:
+                    self.shark_tracker[symbol] = {
+                        'count': 0, 
+                        'last_seen': 0, 
+                        'last_alert': 0
+                    }
+                
+                # Update Stats (For Dashboard)
+                if symbol not in self.shark_stats:
+                    self.shark_stats[symbol] = {'buy_val': 0, 'sell_val': 0}
+                
+                # Heuristic: Green/Ref = Buy flow, Red = Sell flow
+                if change_pc >= 0:
+                    self.shark_stats[symbol]['buy_val'] += order_value
+                else:
+                    self.shark_stats[symbol]['sell_val'] += order_value
+                
+                tracker = self.shark_tracker[symbol]
+                
+                # 2. Logic Hit Counting
+                time_diff = now - tracker['last_seen']
+                
+                if time_diff > CLUSTER_TIMEOUT:
+                    # Timeout -> Reset sequence
+                    tracker['count'] = 1
+                else:
+                    tracker['count'] += 1
+                
+                tracker['last_seen'] = now
+                
+                # 3. Trigger Logic
+                if tracker['count'] >= MIN_HIT_COUNT:
+                    if now - tracker['last_alert'] > ALERT_COOLDOWN:
+                        self.send_alert(symbol, price, change_pc, total_vol, tracker['count'], order_value)
+                        tracker['last_alert'] = now
+                        self.watchlist_service.add_to_watchlist(symbol)
+
         except Exception as e:
-            # print(f"Tick Error: {e}")
             pass
 
-    def send_alert(self, symbol, current_vol, price, change, baseline):
-        # Auto-add to Watchlist
-        self.watchlist_service.add_to_watchlist(symbol)
+    def process_ohlc(self, payload):
+        pass
+
+    def send_alert(self, symbol, price, change_pc, total_vol, hit_count, last_val):
+        if not self.alert_chat_id:
+            return
+
+        icon = "📈" if change_pc >= 0 else "📉"
         
-        avg_5d = baseline['avg_5d']
-        
-        # Explosion Ratio (e.g. 150%)
-        ratio = (current_vol / avg_5d) * 100
-        
-        # Format Alert
         msg = (
-            f"🚀 **BÙNG NỔ THANH KHOẢN**: #{symbol}\n"
             f"-----------------------------------\n"
-            f"📈 Giá hiện tại: `{price:,.2f}` (Tăng `{change:+.2f}%`)\n"
-            f"⚡ Volume: `{current_vol:,.0f}` cp\n"
+            f"🦈 **CÁ MẬP GOM LIÊN TỤC**: #{symbol}\n"
             f"-----------------------------------\n"
-            f"📊 **Phân tích Đột biến**:\n"
-            f"• Vượt `{ratio:.0f}%` trung bình 5 phiên\n"
-            f"• Xu hướng 3 tháng: Tăng trưởng ✅\n"
+            f"🔥 **Tín hiệu**: Phát hiện {hit_count} lệnh > 1 Tỷ\n"
+            f"⏱️ **Trong vòng**: {CLUSTER_TIMEOUT//60} phút vừa qua\n"
             f"-----------------------------------\n"
-            f"💾 Đã lưu vào Watchlist (72h)"
+            f"📍 **Chi tiết lệnh gần nhất**:\n"
+            f"• Giá trị: `{last_val/1e9:,.1f}` Tỷ đồng\n"
+            f"• Giá khớp: `{price:,.0f}` ({change_pc:+.2f}% {icon})\n"
+            f"-----------------------------------\n"
+            f"💾 Đã thêm vào Watchlist (48h)"
         )
         
-        self.bot.send_message(self.alert_chat_id, msg, parse_mode='Markdown')
+        try:
+            self.bot.send_message(self.alert_chat_id, msg, parse_mode='Markdown')
+        except Exception as e:
+            print(f"Alert Failed: {e}") 
+
+    def get_shark_stats(self, symbol):
+        """Return (buy_val, sell_val) for a symbol"""
+        with self.lock:
+            data = self.shark_stats.get(symbol, {'buy_val': 0, 'sell_val': 0})
+            return data['buy_val'], data['sell_val'] 

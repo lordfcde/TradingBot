@@ -90,7 +90,7 @@ def on_price_gold(message):
 
 @bot.message_handler(commands=['stock'])
 def on_stock(message):
-    handle_stock_price(bot, message, dnse_service)
+    handle_stock_price(bot, message, dnse_service, shark_service)
 
 @bot.message_handler(commands=['shark_on'])
 def on_shark_start(message):
@@ -115,7 +115,7 @@ def on_text(message):
     elif text == "📊 Tổng quan thị trường":
         handle_market_overview(bot, message, dnse_service)
     elif text == "🔎 Tra cứu Cổ phiếu":
-        handle_stock_search_request(bot, message, dnse_service)
+        handle_stock_search_request(bot, message, dnse_service, shark_service)
     elif text == "⭐ Watchlist":
         handle_show_watchlist(bot, message, watchlist_viewer)
     elif text == "🔙 Quay lại":

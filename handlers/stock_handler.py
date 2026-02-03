@@ -53,7 +53,7 @@ from datetime import datetime
 
 # ... (imports)
 
-def format_stock_reply(data):
+def format_stock_reply(data, shark_service=None):
     """
     Helper function to format stock data message.
     """
@@ -92,12 +92,28 @@ def format_stock_reply(data):
         f"📊 Tổng Vol: `{total_vol:,.0f}`\n"
         f"-----------------------------\n"
         f"📈 Cao nhất: `{high_price:,.2f}`\n"
-        f"📉 Thấp nhất: `{low_price:,.2f}`\n"
-        f"➗ Trung bình: `{avg_price:,.2f}`\n"
-        f"-----------------------------"
+    f"📉 Thấp nhất: `{low_price:,.2f}`\n"
+        f"➗ Trung bình: `{avg_price:,.2f}`"
     )
 
-def handle_stock_price(bot, message, dnse_service):
+    # 🦈 Shark Stats (Added)
+    if shark_service:
+        try:
+            s_buy, s_sell = shark_service.get_shark_stats(stock_id)
+            if s_buy > 0 or s_sell > 0:
+                s_net = s_buy - s_sell
+                icon = "🟢" if s_net >= 0 else "🔴"
+                base_msg += (
+                    f"\n-----------------------------\n"
+                    f"🦈 **Cá mập (>1Tỷ)**: {icon} `{s_net/1e9:,.1f}` Tỷ\n"
+                    f"(Mua: {s_buy/1e9:.1f}T - Bán: {s_sell/1e9:.1f}T)"
+                )
+        except: pass
+    
+    base_msg += "\n-----------------------------"
+    return base_msg
+
+def handle_stock_price(bot, message, dnse_service, shark_service=None):
     """Xử lý lệnh /stock"""
     try:
         parts = message.text.split()
@@ -131,16 +147,16 @@ def handle_stock_price(bot, message, dnse_service):
         print(f"Stock Error: {e}")
         bot.reply_to(message, "❌ Lỗi hệ thống.")
 
-def handle_stock_search_request(bot, message, dnse_service):
+def handle_stock_search_request(bot, message, dnse_service, shark_service=None):
     """
     Bước 1: Hỏi người dùng nhập mã stock
     """
     prompt_msg = bot.reply_to(message, "🔠 **Nhập mã Cổ phiếu** bạn muốn xem (Ví dụ: HPG, SSI):", parse_mode='Markdown')
     
     # Register next step
-    bot.register_next_step_handler(prompt_msg, lambda m: process_stock_search_step(bot, m, dnse_service))
+    bot.register_next_step_handler(prompt_msg, lambda m: process_stock_search_step(bot, m, dnse_service, shark_service))
 
-def process_stock_search_step(bot, message, dnse_service):
+def process_stock_search_step(bot, message, dnse_service, shark_service=None):
     """
     Bước 2: Nhận mã stock và gọi logic lấy giá
     """
@@ -301,9 +317,28 @@ def handle_market_overview(bot, message, dnse_service):
             f"{headline}\n\n"
             f"**Chi tiết nhóm:**\n"
             f"{details_str}\n"
-            f"💰 **Thanh khoản (VNINDEX)**: `{gtgd_val:,.0f}` Tỷ đồng\n"
-            f"-----------------------------------"
+            f"💰 **Thanh khoản (VNINDEX)**: `{gtgd_val:,.0f}` Tỷ đồng"
         )
+
+        # Foreign Flow (Khối ngoại) - Added logic
+        if vni:
+            # Try different keys typical for KRX feeds
+            f_buy = float(vni.get("totalForeignBuyValue", 0) or vni.get("foreignBuyValue", 0))
+            f_sell = float(vni.get("totalForeignSellValue", 0) or vni.get("foreignSellValue", 0))
+            
+            # If 0, maybe keys are different (e.g. 'foreignTotal...'). 
+            # We show it if NON-ZERO to avoid noise if data is missing.
+            if f_buy != 0 or f_sell != 0:
+                f_net = f_buy - f_sell
+                net_icon = "🟢" if f_net >= 0 else "🔴"
+                net_txt = "Mua ròng" if f_net >= 0 else "Bán ròng"
+                
+                reply_msg += (
+                    f"\n🌍 **Khối ngoại**: {net_icon} {net_txt} `{abs(f_net):,.0f}` Tỷ"
+                )
+
+        reply_msg += "\n-----------------------------------"
+
         
         bot.delete_message(chat_id=message.chat.id, message_id=msg_wait.message_id)
         bot.send_message(message.chat.id, reply_msg, parse_mode='Markdown')

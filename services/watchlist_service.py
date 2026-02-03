@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timedelta
 
 WATCHLIST_FILE = "watchlist.json"
-EXPIRY_HOURS = 72
+EXPIRY_HOURS = 48
 
 class WatchlistService:
     def __init__(self):
