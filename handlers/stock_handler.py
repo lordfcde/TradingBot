@@ -49,6 +49,54 @@ def handle_gold_price(bot, message, gold_service):
         print(f"Lỗi Gold: {e}")
         bot.reply_to(message, "❌ Có lỗi xảy ra khi lấy dữ liệu.")
 
+from datetime import datetime
+
+# ... (imports)
+
+def format_stock_reply(data):
+    """
+    Helper function to format stock data message.
+    """
+    stock_id = data.get("symbol", "UNKNOWN")
+    price = float(data.get("matchPrice", 0))
+    change_pc = float(data.get("changedRatio", 0))
+    ref_price = float(data.get("referencePrice", 0))
+    
+    # New fields
+    high_price = float(data.get("highestPrice", 0) or data.get("highPrice", 0))
+    low_price = float(data.get("lowestPrice", 0) or data.get("lowPrice", 0))
+    avg_price = float(data.get("avgPrice", 0) or data.get("averagePrice", 0))
+    
+    # If Avg is 0, leave it or hide it? unique request: "calculate if not exists"
+    # We assume API gives it. If 0, we show 0.
+    
+    vol_str = str(data.get("totalVolumeTraded", "0"))
+    total_vol = int(vol_str) if vol_str.isdigit() else 0
+    
+    # Date
+    # data might have 'time' or 'transactTime'
+    # Default to current time if missing
+    log_time = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    
+    if change_pc > 0: trend_icon = "📈"
+    elif change_pc < 0: trend_icon = "📉"
+    else: trend_icon = "🟡"
+
+    return (
+        f"-----------------------------\n"
+        f"🔥 **{stock_id}** (Real-time)\n"
+        f"🕒 `{log_time}`\n"
+        f"-----------------------------\n"
+        f"💰 Giá: `{price:,.2f}` ({change_pc:+.2f}% {trend_icon})\n"
+        f"⚖️ Tham chiếu: `{ref_price:,.2f}`\n"
+        f"📊 Tổng Vol: `{total_vol:,.0f}`\n"
+        f"-----------------------------\n"
+        f"📈 Cao nhất: `{high_price:,.2f}`\n"
+        f"📉 Thấp nhất: `{low_price:,.2f}`\n"
+        f"➗ Trung bình: `{avg_price:,.2f}`\n"
+        f"-----------------------------"
+    )
+
 def handle_stock_price(bot, message, dnse_service):
     """Xử lý lệnh /stock"""
     try:
@@ -73,33 +121,7 @@ def handle_stock_price(bot, message, dnse_service):
         
         # Wait max 10 seconds
         if data_event.wait(timeout=10.0):
-            # Parse keys
-            stock_id = received_data.get("symbol", symbol)
-            price = float(received_data.get("matchPrice", 0))
-            change_pc = float(received_data.get("changedRatio", 0))
-            ref_price = float(received_data.get("referencePrice", 0))
-            
-            vol_str = str(received_data.get("totalVolumeTraded", "0"))
-            total_vol = int(vol_str) if vol_str.isdigit() else 0
-            
-            # Determine Icon
-            if change_pc > 0:
-                trend_icon = "📈"  # or 🟢
-                # color_note = " (Tăng)" # User didn't ask for text note in final refinement vs image
-            elif change_pc < 0:
-                trend_icon = "📉"  # or 🔴
-            else:
-                trend_icon = "🟡"
-
-            reply_msg = (
-                f"-----------------------------\n"
-                f"🔥 **{stock_id}** (Real-time)\n"
-                f"-----------------------------\n"
-                f"💰 Giá: `{price:,.2f}` ({change_pc:+.2f}% {trend_icon})\n"
-                f"⚖️ Tham chiếu: `{ref_price:,.2f}`\n"
-                f"📊 Tổng Vol: `{total_vol:,.0f}`\n"
-                f"-----------------------------"
-            )
+            reply_msg = format_stock_reply(received_data)
             bot.delete_message(chat_id=message.chat.id, message_id=msg_wait.message_id)
             bot.send_message(message.chat.id, reply_msg, parse_mode='Markdown')
         else:
@@ -108,6 +130,84 @@ def handle_stock_price(bot, message, dnse_service):
     except Exception as e:
         print(f"Stock Error: {e}")
         bot.reply_to(message, "❌ Lỗi hệ thống.")
+
+def handle_stock_search_request(bot, message, dnse_service):
+    """
+    Bước 1: Hỏi người dùng nhập mã stock
+    """
+    prompt_msg = bot.reply_to(message, "🔠 **Nhập mã Cổ phiếu** bạn muốn xem (Ví dụ: HPG, SSI):", parse_mode='Markdown')
+    
+    # Register next step
+    bot.register_next_step_handler(prompt_msg, lambda m: process_stock_search_step(bot, m, dnse_service))
+
+def process_stock_search_step(bot, message, dnse_service):
+    """
+    Bước 2: Nhận mã stock và gọi logic lấy giá
+    """
+    try:
+        symbol = message.text.upper().strip()
+        
+        # Validation checks
+        if not symbol.isalnum() or len(symbol) > 6:
+            bot.reply_to(message, "⚠️ Mã cổ phiếu không hợp lệ. Vui lòng thử lại.")
+            return
+
+        msg_wait = bot.reply_to(message, f"⏳ Đang tải dữ liệu **{symbol}**...", parse_mode='Markdown')
+        
+        data_event = threading.Event()
+        received_data = {}
+        
+        def on_stock_data(payload):
+            received_data.update(payload)
+            data_event.set()
+            
+        dnse_service.get_realtime_price(symbol, on_stock_data)
+        
+        if data_event.wait(timeout=10.0):
+            reply_msg = format_stock_reply(received_data)
+            bot.delete_message(chat_id=message.chat.id, message_id=msg_wait.message_id)
+            bot.send_message(message.chat.id, reply_msg, parse_mode='Markdown')
+        else:
+             bot.edit_message_text(f"❌ Không tìm thấy mã **{symbol}** or Timeout.", chat_id=message.chat.id, message_id=msg_wait.message_id, parse_mode='Markdown')
+
+    except Exception as e:
+        print(f"Search Step Error: {e}")
+        bot.reply_to(message, "❌ Lỗi xử lý.")
+
+    except Exception as e:
+        print(f"Search Step Error: {e}")
+        bot.reply_to(message, "❌ Lỗi xử lý.")
+
+def handle_show_watchlist(bot, message, watchlist_service):
+    try:
+        items = watchlist_service.get_active_watchlist()
+        
+        if not items:
+            bot.reply_to(message, "📭 Watchlist của bạn đang trống.\n(Hệ thống chưa phát hiện Cá Mập nào trong 3 ngày qua)")
+            return
+            
+        # Format list
+        lines = []
+        for idx, item in enumerate(items, 1):
+            sym = item['symbol']
+            t_str = item['time_str']
+            lines.append(f"{idx}. **#{sym}** (Báo: {t_str})")
+            
+        list_str = "\n".join(lines)
+        
+        msg = (
+            f"-----------------------------------\n"
+            f"⭐ **DANH SÁCH CÁ MẬP** (3 Ngày qua)\n"
+            f"-----------------------------------\n"
+            f"{list_str}\n"
+            f"-----------------------------------\n"
+            f"💡 Các mã sẽ tự động xóa sau 72h."
+        )
+        bot.reply_to(message, msg, parse_mode='Markdown')
+        
+    except Exception as e:
+        print(f"Watchlist Error: {e}")
+        bot.reply_to(message, "❌ Lỗi đọc Watchlist.")
 
 def handle_market_overview(bot, message, dnse_service):
     """

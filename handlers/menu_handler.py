@@ -21,7 +21,10 @@ def create_stock_menu():
     # Row 1
     markup.add(types.KeyboardButton("📊 Tổng quan thị trường"))
     # Row 2
-    markup.add(types.KeyboardButton("⭐ Watchlist (Sắp ra mắt)"))
+    markup.add(
+        types.KeyboardButton("🔎 Tra cứu Cổ phiếu"),
+        types.KeyboardButton("⭐ Watchlist")
+    )
     # Row 3 (Back)
     markup.add(types.KeyboardButton("🔙 Quay lại"))
     

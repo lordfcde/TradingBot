@@ -29,10 +29,15 @@ class DNSEService:
         # Callback storage: symbol -> function
         self.callbacks = {}
         
+        # New: Generic Stream Handlers (for Shark Hunter)
+        self.ohlc_global_handler = None
+        self.tick_global_handler = None
+        
         # Connect immediately
         self.connect()
 
     def authenticate(self):
+        # ... (authentication logic remains same)
         try:
             print(f"🔹 DEBUG: Username loaded: {self.username is not None}")
             print(f"🔹 DEBUG: Password loaded: {self.password is not None}")
@@ -42,8 +47,6 @@ class DNSEService:
             
             print(f"🔹 DEBUG: Sending Auth Request to {url}...")
             response = requests.post(url, json=payload)
-            # print(f"🔹 DEBUG: Auth Response Code: {response.status_code}")
-            
             response.raise_for_status()
             self.token = response.json().get("token")
             print("✅ Auth Successful! Token received.")
@@ -71,8 +74,19 @@ class DNSEService:
 
     def on_message(self, client, userdata, msg):
         try:
+            topic = msg.topic
             payload = json.loads(msg.payload.decode())
             
+            # 1. Stream Dispatch (Priority for Shark Hunter)
+            if "ohlc/stock/1D" in topic and self.ohlc_global_handler:
+                self.ohlc_global_handler(payload)
+                # Don't return, allow specific callbacks (if any) to also fire?
+                # For now, continue.
+
+            if "stockinfo/v1/roundlot" in topic and self.tick_global_handler:
+                self.tick_global_handler(payload)
+            
+            # 2. Specific Callbacks (Legacy /stock command)
             # Identify Key: Stock uses 'symbol', Index uses 'indexName' or 'id'
             routing_key = payload.get("symbol")
             if not routing_key:
@@ -87,13 +101,6 @@ class DNSEService:
             # Trigger callback if exists
             if routing_key and routing_key in self.callbacks:
                 self.callbacks[routing_key](payload)
-                # Cleanup callback after receiving one message (unless we want stream)
-                # For this bot flow (Request -> Reply), deleting is fine to avoid stale callbacks.
-                # BUT for multiple indices, 3 callbacks might share same name? No, dict keys are unique.
-                # If we subscribe to multiple, we register routing_key for each.
-                # del self.callbacks[routing_key] # Keep for stream or delete? 
-                # Better to keep it if we want stream, but here we used One-Shot event in handler.
-                # If we delete, subsequent updates won't be processed, which is fine for "Get Price".
                 pass 
                 
         except Exception as e:
@@ -175,7 +182,33 @@ class DNSEService:
             idx = idx.upper()
             # Register same callback for all
             self.callbacks[idx] = callback
-            topic = f"plaintext/quotes/krx/mdds/index/{idx}"
-            self.client.subscribe(topic, qos=1)
             # print(f"🔹 Subscribed to Index: {idx}")
+
+    def register_shark_streams(self, ohlc_cb, tick_cb):
+        """
+        Register global handlers for the Shark Hunter engine.
+        """
+        self.ohlc_global_handler = ohlc_cb
+        self.tick_global_handler = tick_cb
+        print("🦈 Shark Hunter Streams Registered.")
+
+    def subscribe_all_markets(self):
+        """
+        FIREHOSE SUBSCRIPTION: Use with caution.
+        Subscribes to ALL stocks OHLC and TICK data.
+        """
+        if not self.client or not self.client.is_connected():
+            self.connect()
+            
+        # Topic 1: OHLC Daily wildcard
+        # Assuming the topic format allows wildcard at the end
+        topic_ohlc = "plaintext/quotes/krx/mdds/v2/ohlc/stock/1D/+"
+        self.client.subscribe(topic_ohlc, qos=0) # QoS 0 for speed/throughput on mass data
+        print(f"🦈 Subscribed to OHLC Stream: {topic_ohlc}")
+        
+        # Topic 2: Real-time Stock Info wildcard
+        # Using wildcard for symbol
+        topic_tick = "plaintext/quotes/krx/mdds/stockinfo/v1/roundlot/symbol/+"
+        self.client.subscribe(topic_tick, qos=0)
+        print(f"🦈 Subscribed to Real-time Stream: {topic_tick}")
 
