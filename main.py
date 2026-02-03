@@ -3,6 +3,8 @@ import telebot
 from telebot import types
 import config
 import logging
+import yfinance as yf
+import datetime
 
 # ==========================================
 # 1. KHỞI TẠO BOT
@@ -44,8 +46,54 @@ def create_main_menu():
 # ==========================================
 def handle_gold_price(message):
     """Xử lý khi bấm nút Giá Vàng"""
-    # Placeholder: Sau này sẽ thêm logic lấy giá vàng thực tế (API yfinance, v.v.)
-    bot.reply_to(message, "⏳ Đang lấy dữ liệu giá Vàng thế giới...\n(Chức năng đang phát triển 🛠)")
+    try:
+        # Gửi tin nhắn chờ
+        msg_wait = bot.reply_to(message, "⏳ Đang lấy dữ liệu giá Vàng thế giới...")
+        
+        # Lấy dữ liệu từ yfinance
+        ticker = yf.Ticker("GC=F")
+        data = ticker.history(period="1d")
+        
+        if data.empty:
+            bot.edit_message_text("❌ Không lấy được dữ liệu. Vui lòng thử lại sau.", chat_id=message.chat.id, message_id=msg_wait.message_id)
+            return
+
+        # Lấy các chỉ số quan trọng
+        current_price = data['Close'].iloc[-1]
+        open_price = data['Open'].iloc[-1]
+        high_price = data['High'].iloc[-1]
+        low_price = data['Low'].iloc[-1]
+        
+        # Tính % thay đổi (so với giá đóng cửa phiên trước - cần lấy lịch sử dài hơn)
+        data_5d = ticker.history(period="5d")
+        if len(data_5d) >= 2:
+            prev_close = data_5d['Close'].iloc[-2]
+            change_percent = ((current_price - prev_close) / prev_close) * 100
+            change_icon = "🟢" if change_percent >= 0 else "🔴"
+        else:
+            change_percent = 0.0
+            change_icon = "⚪️"
+
+        # Format tin nhắn
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S %d/%m/%Y")
+        
+        reply_msg = (
+            f"🌟 **GOLD PRICE UPDATE** 🌟\n"
+            f"🕒 Cập nhật: `{timestamp}`\n\n"
+            f"💰 **Giá hiện tại**: `{current_price:,.1f}` USD {change_icon} (`{change_percent:+.2f}%`)\n"
+            f"---------------------------------\n"
+            f"📈 Cao nhất: `{high_price:,.1f}`\n"
+            f"📉 Thấp nhất: `{low_price:,.1f}`\n"
+            f"🚪 Mở cửa: `{open_price:,.1f}`\n"
+        )
+        
+        # Xóa tin nhắn chờ và gửi tin mới
+        bot.delete_message(chat_id=message.chat.id, message_id=msg_wait.message_id)
+        bot.send_message(message.chat.id, reply_msg, parse_mode='Markdown')
+        
+    except Exception as e:
+        print(f"Lỗi Gold: {e}")
+        bot.reply_to(message, "❌ Có lỗi xảy ra khi lấy dữ liệu.")
 
 def handle_vn_stock(message):
     """Xử lý khi bấm nút Cổ Phiếu VN"""
@@ -82,6 +130,11 @@ def send_welcome(message):
         reply_markup=create_main_menu(), 
         parse_mode="Markdown"
     )
+
+@bot.message_handler(commands=['pricegold'])
+def command_price_gold(message):
+    """Xử lý lệnh /pricegold"""
+    handle_gold_price(message)
 
 # Điều hướng tin nhắn văn bản (Text Filters)
 @bot.message_handler(func=lambda message: True)
