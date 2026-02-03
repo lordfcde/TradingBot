@@ -3,4 +3,7 @@ __pycache__/
 *.json
 .venv/
 .env
+**/.env
 .DS_Store
+~$*
+debug_*.py
