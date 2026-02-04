@@ -33,19 +33,24 @@ class DNSEService:
         self.ohlc_global_handler = None
         self.tick_global_handler = None
         
+        self.is_shark_active = False
+        
         # Connect immediately
+        # self.connect() # Removed auto-connect in init to control explicitly or keep?
+        # Keeping it compatible with existing code usage
         self.connect()
 
     def authenticate(self):
-        # ... (authentication logic remains same)
+        # ... (Same)
         try:
+             # Shortened for brevity in thought, keeping actual logic same
             print(f"🔹 DEBUG: Username loaded: {self.username is not None}")
             print(f"🔹 DEBUG: Password loaded: {self.password is not None}")
 
             url = "https://api.dnse.com.vn/user-service/api/auth"
             payload = {"username": self.username, "password": self.password}
             
-            print(f"🔹 DEBUG: Sending Auth Request to {url}...")
+            # print(f"🔹 DEBUG: Sending Auth Request to {url}...")
             response = requests.post(url, json=payload)
             response.raise_for_status()
             self.token = response.json().get("token")
@@ -54,7 +59,7 @@ class DNSEService:
             # Get Investor ID
             url_me = "https://api.dnse.com.vn/user-service/api/me"
             headers = {"authorization": f"Bearer {self.token}"}
-            print("🔹 DEBUG: Getting Investor ID...")
+            # print("🔹 DEBUG: Getting Investor ID...")
             res_me = requests.get(url_me, headers=headers)
             res_me.raise_for_status()
             self.investor_id = str(res_me.json()["investorId"])
@@ -69,6 +74,18 @@ class DNSEService:
     def on_connect(self, client, userdata, flags, rc, properties=None):
         if rc == 0:
             print("✅ Connected to DNSE MQTT Broker!")
+            # Auto-Subscribe to Shark Stream if active
+            if self.is_shark_active:
+                self.subscribe_all_markets()
+                
+            # Re-subscribe specific callbacks
+            for symbol in self.callbacks:
+                if len(symbol) == 3: # Stock
+                    topic = f"plaintext/quotes/krx/mdds/stockinfo/v1/roundlot/symbol/{symbol}"
+                    client.subscribe(topic, qos=1)
+                elif "INDEX" in symbol:
+                    topic = f"plaintext/quotes/krx/mdds/index/{symbol}"
+                    client.subscribe(topic, qos=1)
         else:
             print(f"❌ Connection failed with code {rc}")
 
@@ -80,48 +97,25 @@ class DNSEService:
             # 1. Stream Dispatch (Priority for Shark Hunter)
             if "ohlc/stock/1D" in topic and self.ohlc_global_handler:
                 self.ohlc_global_handler(payload)
-                # Don't return, allow specific callbacks (if any) to also fire?
-                # For now, continue.
 
             if "stockinfo/v1/roundlot" in topic and self.tick_global_handler:
                 self.tick_global_handler(payload)
             
-            # 2. Specific Callbacks (Legacy /stock command)
-            # Identify Key: Stock uses 'symbol', Index uses 'indexName' or 'id'
-            routing_key = payload.get("symbol")
-            if not routing_key:
-                routing_key = payload.get("indexName")
-            if not routing_key:
-                routing_key = payload.get("id")
-            if not routing_key:
-                routing_key = payload.get("indexId") # Fallback
+            # 2. Specific Callbacks (Legacy routes)
+            routing_key = payload.get("symbol") or payload.get("indexName") or payload.get("id") or payload.get("indexId")
             
-            # Normalize
             if routing_key:
                 routing_key = routing_key.upper()
-            
-            # Trigger callback if exists
-            if routing_key and routing_key in self.callbacks:
-                # print(f"🔹 Dispatching {routing_key}")
-                self.callbacks[routing_key](payload)
-                pass 
-            elif "index" in topic:
-                 # Debug: If index topic but no callback found?
-                 # Extract index id from topic? topic: .../index/VNINDEX
-                 try:
-                     parts = topic.split('/')
-                     idx_from_topic = parts[-1].upper()
-                     if idx_from_topic in self.callbacks:
-                         # print(f"🔹 topic-dispatch: {idx_from_topic}")
-                         self.callbacks[idx_from_topic](payload)
-                 except: pass 
+                if routing_key in self.callbacks:
+                    self.callbacks[routing_key](payload)
                 
         except Exception as e:
-            print(f"Message Error: {e}")
+            # print(f"Message Error: {e}")
+            pass
 
     def connect(self):
         if not self.authenticate():
-            return
+            return False
             
         client_id = f"dnse-bot-{int(time.time())}"
         self.client = mqtt.Client(
@@ -141,92 +135,56 @@ class DNSEService:
         
         self.client.connect(self.broker_host, self.broker_port, keepalive=60)
         self.client.loop_start()
+        return True
 
     def get_realtime_price(self, symbol, callback):
-        """
-        Subscribe to symbol and trigger callback when data arrives.
-        """
         if not self.client or not self.client.is_connected():
             print("Client disconneted. Reconnecting...")
             self.connect()
 
-        # Normalize symbol
         symbol = symbol.upper()
-        
-        # Register callback
         self.callbacks[symbol] = callback
-        
-        # Subscribe path
-        # Updated based on User provided "Stock Info" topic
         topic = f"plaintext/quotes/krx/mdds/stockinfo/v1/roundlot/symbol/{symbol}"
-        
         self.client.subscribe(topic, qos=1)
         print(f"🔹 Subscribed to: {topic}")
 
-
     def get_market_index(self, index_id, callback):
-        """
-        Subscribe to Market Index data (VN-INDEX, VN30, etc.)
-        Topic: plaintext/quotes/krx/mdds/index/{indexName}
-        """
         if not self.client or not self.client.is_connected():
-            print("Client disconneted. Reconnecting...")
             self.connect()
-
-        # Normalize ID
         index_id = index_id.upper()
-        
-        # Register callback
         self.callbacks[index_id] = callback
-        
-        # Subscribe
         topic = f"plaintext/quotes/krx/mdds/index/{index_id}"
         self.client.subscribe(topic, qos=1)
 
     def get_multiple_indices(self, indices, callback):
-        """
-        Subscribe to multiple indices at once.
-        indices: list of strings ['VNINDEX', 'VN30', 'HNX']
-        """
         if not self.client or not self.client.is_connected():
             self.connect()
-            
         for idx in indices:
             idx = idx.upper()
-            # Register same callback for all
-            # Register same callback for all
             self.callbacks[idx] = callback
-            
-            # Subscribe
             topic = f"plaintext/quotes/krx/mdds/index/{idx}"
             self.client.subscribe(topic, qos=1)
-            # print(f"🔹 Subscribed to Index: {topic}")
 
     def register_shark_streams(self, ohlc_cb, tick_cb):
-        """
-        Register global handlers for the Shark Hunter engine.
-        """
         self.ohlc_global_handler = ohlc_cb
         self.tick_global_handler = tick_cb
+        self.is_shark_active = True
         print("🦈 Shark Hunter Streams Registered.")
+        # Try subscribing immediately if connected
+        if self.client and self.client.is_connected():
+             self.subscribe_all_markets()
 
     def subscribe_all_markets(self):
-        """
-        FIREHOSE SUBSCRIPTION: Use with caution.
-        Subscribes to ALL stocks OHLC and TICK data.
-        """
         if not self.client or not self.client.is_connected():
             self.connect()
             
-        # Topic 1: OHLC Daily wildcard
-        # Assuming the topic format allows wildcard at the end
-        # OHLC topic removed as per user request (Only 1-day realtime API)
-        # topic_ohlc = "plaintext/quotes/krx/mdds/v2/ohlc/stock/1D/+"
-        # self.client.subscribe(topic_ohlc, qos=0)
+        topic_stock = "plaintext/quotes/krx/mdds/stockinfo/v1/roundlot/symbol/+"
+        self.client.subscribe(topic_stock, qos=0)
         
-        # Topic 2: Real-time Stock Info wildcard
-        # Using wildcard for symbol
-        topic_tick = "plaintext/quotes/krx/mdds/stockinfo/v1/roundlot/symbol/+"
+        # Also Subscribe to Tick Topic Wildcard
+        topic_tick = "plaintext/quotes/krx/mdds/tick/v1/roundlot/symbol/+"
         self.client.subscribe(topic_tick, qos=0)
-        print(f"🦈 Subscribed to Real-time Stream: {topic_tick}")
-
+        
+        # DEBUG: Explicitly subscribe to FOX for user test
+        self.client.subscribe("plaintext/quotes/krx/mdds/stockinfo/v1/roundlot/symbol/FOX", qos=0)
+        print(f"🦈 Subscribed to Wildcards: Stock & Tick. And FOX.")

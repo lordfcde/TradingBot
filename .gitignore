@@ -1,9 +1,29 @@
+# Python
 __pycache__/
-*.log
-*.json
+*.pyc
+*.pyo
 .venv/
+venv/
+*.egg-info/
+
+# Environment Variables
 .env
-**/.env
+.env.local
+.env.*.local
+
+# Runtime State & Logs
+*.json
+*.log
+
+# OS Files
 .DS_Store
-~$*
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test artifacts
 debug_*.py

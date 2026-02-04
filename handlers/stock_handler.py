@@ -62,6 +62,8 @@ def format_stock_reply(data, shark_service=None):
     change_pc = float(data.get("changedRatio", 0))
     ref_price = float(data.get("referencePrice", 0))
     
+    print(f"🔹 DEBUG STOCK PAYLOAD [{stock_id}]: {data}")
+
     # New fields
     high_price = float(data.get("highestPrice", 0) or data.get("highPrice", 0))
     low_price = float(data.get("lowestPrice", 0) or data.get("lowPrice", 0))
@@ -78,6 +80,16 @@ def format_stock_reply(data, shark_service=None):
     # Default to current time if missing
     log_time = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     
+    # Buy/Sell Surplus Removed as per request
+    # Add Last Match Volume (User says Unit is 10, so x10)
+    # FILTER: odd lots (<100) are ignored.
+    raw_match_vol = int(data.get("matchQuantity", 0) or data.get("matchVolume", 0) or data.get("lastVol", 0) or 0)
+    match_vol = raw_match_vol * 10
+    
+    # Hide if Odd Lot (Volume < 100)
+    if match_vol < 100:
+        match_vol = 0
+
     if change_pc > 0: trend_icon = "📈"
     elif change_pc < 0: trend_icon = "📉"
     else: trend_icon = "🟡"
@@ -88,6 +100,7 @@ def format_stock_reply(data, shark_service=None):
         f"🕒 `{log_time}`\n"
         f"-----------------------------\n"
         f"💰 Giá: `{price:,.2f}` ({change_pc:+.2f}% {trend_icon})\n"
+        f"📦 KL Khớp: `{match_vol:,.0f}`\n"
         f"⚖️ Tham chiếu: `{ref_price:,.2f}`\n"
         f"📊 Tổng Vol: `{total_vol:,.0f}`\n"
         f"-----------------------------\n"

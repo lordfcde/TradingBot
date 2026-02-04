@@ -10,14 +10,22 @@ from services.gold_service import GoldService
 
 # Handlers
 from handlers.stock_handler import handle_stock_price, handle_gold_price, handle_market_overview, handle_stock_search_request, handle_show_watchlist
-from handlers.menu_handler import send_welcome, handle_help, handle_contact, handle_vn_stock, handle_back_main, create_main_menu
+from handlers.menu_handler import send_welcome, handle_help, handle_contact, handle_vn_stock, handle_back_main, create_main_menu, handle_shark_menu
 from services.shark_hunter_service import SharkHunterService
 from services.watchlist_service import WatchlistService
 
 # ==========================================
 # 1. KHỞI TẠO BOT & SERVICES
 # ==========================================
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# ==========================================
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
+    level=logging.INFO,
+    handlers=[
+        logging.FileHandler("bot_run.log"),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
 try:
@@ -32,8 +40,8 @@ try:
     bot.set_my_commands([
         types.BotCommand("start", "🚀 Menu Chính"),
         types.BotCommand("stock", "📈 Xem giá Cổ phiếu (Real-time)"),
+        types.BotCommand("shark_on", "🦈 Bật Săn Cá Mập"),
         types.BotCommand("pricegold", "💰 Xem giá Vàng Thế Giới"),
-        types.BotCommand("shark_on", "🦈 Bật Shark Hunter"),
         types.BotCommand("help", "ℹ️ Hướng dẫn sử dụng")
     ])
 
@@ -59,7 +67,8 @@ try:
             if shark_service.alert_chat_id:
                 print("📡 Resuming Scanner Subscriptions...")
                 dnse_service.subscribe_all_markets()
-                bot.send_message(shark_service.alert_chat_id, "🔄 **Bot Restarted**: Scanner resuming automatically...")
+                # Force Test Alert to Verify Connectivity
+                shark_service.send_test_alert()
                 
         else:
             print("❌ DNSE Connection Failed.")
@@ -92,16 +101,22 @@ def on_price_gold(message):
 def on_stock(message):
     handle_stock_price(bot, message, dnse_service, shark_service)
 
+
+
 @bot.message_handler(commands=['shark_on'])
-def on_shark_start(message):
-    shark_service.set_alert_chat_id(message.chat.id)
-    # Register Streams
-    dnse_service.register_shark_streams(
-        ohlc_cb=shark_service.process_ohlc,
-        tick_cb=shark_service.process_tick
-    )
-    # Start Firehose
+def on_shark_on(message):
+    chat_id = message.chat.id
+    res = shark_service.enable_alerts(chat_id)
+    
+    # Ensure Global Stream is Active (Explicit FOX + Wildcard)
     dnse_service.subscribe_all_markets()
+    
+    bot.reply_to(message, "🦈 **ĐÃ BẬT CẢNH BÁO CÁ MẬP!**\n\n- Bot sẽ quét toàn bộ thị trường.\n- Lọc lệnh > 1 Tỷ VNĐ.\n\n⚡ **Test Mode**: Đang theo dõi FOX (báo 3 lệnh tiếp theo).")
+
+@bot.message_handler(commands=['shark_stats', 'sharks'])
+def on_shark_stats(message):
+    report = shark_service.get_stats_report()
+    bot.send_message(message.chat.id, report, parse_mode='Markdown')
 
 # --- Text Filters (Router) ---
 @bot.message_handler(func=lambda message: True)
@@ -120,6 +135,18 @@ def on_text(message):
         handle_show_watchlist(bot, message, watchlist_viewer)
     elif text == "🔙 Quay lại":
         handle_back_main(bot, message)
+
+    # --- SHARK HUNTER MENU ---
+    elif text == "🦈 Săn Cá Mập":
+        handle_shark_menu(bot, message)
+        
+    elif text == "✅ Bật Cảnh Báo":
+        if shark_service.enable_alerts(message.chat.id):
+            bot.reply_to(message, "🦈 **ĐÃ BẬT CẢNH BÁO CÁ MẬP!**\n\n- Bot sẽ quét lệnh > 1 Tỷ VNĐ.\n\n_Hãy kiên nhẫn, Cá Mập sẽ xuất hiện!_ 🌊")
+            
+    elif text == "📊 Thống Kê Hôm Nay":
+        report = shark_service.get_stats_report()
+        bot.send_message(message.chat.id, report, parse_mode='Markdown')
     elif text == "ℹ️ Hướng dẫn / Help":
         handle_help(bot, message)
     elif text == "📞 Liên hệ Admin":
