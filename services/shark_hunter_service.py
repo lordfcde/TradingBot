@@ -12,10 +12,12 @@ CONFIG_FILE = "scanner_config.json"
 STATS_FILE = "shark_stats.json"
 
 # Default Constants (Fallback)
-DEFAULT_MIN_VALUE = 1_000_000_000
+DEFAULT_MIN_VALUE = 1_000_000_000  # 1 Billion VND
 DEFAULT_COOLDOWN = 60
-DEFAULT_START_TIME = "09:15"
+DEFAULT_START_TIME = "09:00"  # Market opens at 9:00 AM
 MAINTENANCE_INTERVAL = 60
+VOLATILITY_THRESHOLD = 5.0  # Alert if price change >= ±5%
+MIN_VOLUME_FOR_VOLATILITY = 200_000  # Minimum total volume to trigger volatility alert
 
 class SharkHunterService:
     def __init__(self, bot):
@@ -37,6 +39,7 @@ class SharkHunterService:
         self.alert_history = {}
         self.shark_stats = {}
         self.trade_history = []  # Store detailed trade logs
+        self.price_tracker = {}  # Track price changes for all stocks
         
         self.last_maintenance = time.time()
         self.last_reset_date = datetime.now().strftime("%Y-%m-%d")
@@ -143,27 +146,60 @@ class SharkHunterService:
             real_price = price if price > 1000 else price * 1000
             order_value = real_price * vol
 
-            # Extract Side (1=Buy, 2=Sell)
+            # Extract Side (1=Buy, 2=Sell) - Stock Info doesn't have this field
             side_code = payload.get("side")
             if side_code == 1:
                 side = "Buy"
             elif side_code == 2:
                 side = "Sell"
             else:
-                side = "Unknown"
+                side = "Unknown"  # Stock Info topic doesn't provide side
+
+            # Track price changes for all stocks (for volatility monitoring)
+            if change_pc != 0:  # Only track if we have price change data
+                is_new_symbol = symbol not in self.price_tracker
+                
+                if is_new_symbol:
+                    self.price_tracker[symbol] = {
+                        'change_pc': change_pc,
+                        'price': real_price,
+                        'total_vol': total_vol,  # Track total volume
+                        'last_update': datetime.now(),
+                        'alerted': False  # Track if we've alerted for this symbol today
+                    }
+                else:
+                    # Update if newer data
+                    self.price_tracker[symbol]['change_pc'] = change_pc
+                    self.price_tracker[symbol]['price'] = real_price
+                    self.price_tracker[symbol]['total_vol'] = total_vol
+                    self.price_tracker[symbol]['last_update'] = datetime.now()
+                
+                # Check for HIGH VOLATILITY and send alert
+                # Only alert if volume >= 200k to avoid low liquidity stocks
+                if abs(change_pc) >= VOLATILITY_THRESHOLD and total_vol >= MIN_VOLUME_FOR_VOLATILITY:
+                    # Check cooldown to avoid spam
+                    alert_key = f"volatility_{symbol}"
+                    now = time.time()
+                    last_alert = self.alert_history.get(alert_key, 0)
+                    
+                    # Only alert once per hour for volatility
+                    if (now - last_alert) > 3600:  # 1 hour cooldown
+                        self.alert_history[alert_key] = now
+                        
+                        # Send volatility alert
+                        direction = "TĂNG" if change_pc > 0 else "GIẢM"
+                        icon = "📈" if change_pc > 0 else "📉"
+                        self._send_volatility_alert(symbol, change_pc, real_price, total_vol, direction, icon)
+
 
             if order_value < self.min_value:
                 # User Requirement: 1 order must be > min_value. Do not accumulate small orders.
                 return
 
             # It is a SHARK order!
-            # 1. Update Statistics immediately (Log detailed history)
-            self._update_stats(symbol, order_value, change_pc, side)
-            
-            # 2. Add to Watchlist (Rapid Trend Check)
-            # User Request: At least 3 orders in SHORT TIME (e.g. 30 mins)
-            # Scan history for this symbol
-            valid_trend_count = 0
+            # 1. Count trend FIRST (including current trade)
+            # User Request: At least 3 orders in 5 MINUTES
+            valid_trend_count = 1  # Start with 1 for current trade
             fmt = "%H:%M:%S"
             now_dt = datetime.now()
             
@@ -174,18 +210,20 @@ class SharkHunterService:
                         t_dt = datetime.strptime(trade['time'], fmt).replace(year=now_dt.year, month=now_dt.month, day=now_dt.day)
                         # Handle potential day wrap (unlikely for intraday bot)
                         delta = (now_dt - t_dt).total_seconds()
-                        if 0 <= delta <= 1800: # 30 Minutes
+                        if 0 <= delta <= 300:  # 5 Minutes (300 seconds)
                             valid_trend_count += 1
                         else:
-                            # If we hit a trade older than 30m, we can stop? 
-                            # Not necessarily if list is mixed, but trade_history is appended chronologically.
-                            # So yes we can stop.
-                            if delta > 1800: break 
+                            # If we hit a trade older than 5m, stop searching
+                            if delta > 300: break 
                     except: pass
             
+            # Add to watchlist if 3+ shark trades in 5 mins
             if valid_trend_count >= 3:
                 self.watchlist_service.add_to_watchlist(symbol)
-                print(f"🔥 HOT TREND: {symbol} in Watchlist ({valid_trend_count} sharks/30m)")
+                print(f"🔥 HOT TREND: {symbol} in Watchlist ({valid_trend_count} sharks/5m)")
+            
+            # 2. Update Statistics and add to history AFTER counting
+            self._update_stats(symbol, order_value, change_pc, side)
             
             # DEBUG: Log detected shark
             print(f"🦈 SHARK DETECTED: {symbol} ({side}) - {order_value:,.0f} VND")
@@ -279,7 +317,7 @@ class SharkHunterService:
                 val_billion = data['total_sell_val'] / 1_000_000_000
                 msg += f"• **{sym}**: {val_billion:.1f} Tỷ 🔴\n"
             msg += "=============================\n"
-        msg += "📝 **LỆNH GẦN NHẤT:**\n"
+        msg += "\n📝 **LỆNH GẦN NHẤT:**\n"
         
         recent = list(reversed(self.trade_history))[:15]
         for trade in recent:
@@ -287,8 +325,81 @@ class SharkHunterService:
             s = trade.get('side', 'Unknown')
             icon = "🟢 MUA" if s == "Buy" else "🔴 BÁN" if s == "Sell" else "⚪️ ?"
             msg += f"• `{trade['time']}` {icon} **{trade['symbol']}**: {val_billion:.1f} Tỷ\n"
+        
+        # === PRICE VOLATILITY SECTION ===
+        msg += "\n📊 **BIẾN ĐỘNG MẠNH HÔM NAY:**\n"
+        msg += "=============================\n"
+        
+        if self.price_tracker:
+            # Get top gainers and losers
+            sorted_stocks = sorted(
+                self.price_tracker.items(),
+                key=lambda x: x[1]['change_pc'],
+                reverse=True
+            )
+            
+            # Top 5 Gainers
+            gainers = [s for s in sorted_stocks if s[1]['change_pc'] > 0][:5]
+            if gainers:
+                msg += "📈 **TOP TĂNG MẠNH:**\n"
+                for symbol, data in gainers:
+                    price_k = data['price'] / 1000
+                    msg += f"• **{symbol}**: +{data['change_pc']:.2f}% ({price_k:.1f}k)\n"
+            
+            # Top 5 Losers
+            losers = sorted(
+                [s for s in sorted_stocks if s[1]['change_pc'] < 0],
+                key=lambda x: x[1]['change_pc']
+            )[:5]
+            if losers:
+                msg += "\n📉 **TOP GIẢM MẠNH:**\n"
+                for symbol, data in losers:
+                    price_k = data['price'] / 1000
+                    msg += f"• **{symbol}**: {data['change_pc']:.2f}% ({price_k:.1f}k)\n"
+        else:
+            msg += "⏳ Chưa có dữ liệu biến động...\n"
             
         return msg
+
+    def get_volatility_report(self):
+        """Generate standalone volatility report for menu."""
+        msg = "📊 **BIẾN ĐỘNG MẠNH HÔM NAY**\n"
+        msg += f"🕒 Cập nhật: {datetime.now().strftime('%H:%M:%S')}\n"
+        msg += "=============================\n"
+        
+        if self.price_tracker:
+            # Get top gainers and losers
+            sorted_stocks = sorted(
+                self.price_tracker.items(),
+                key=lambda x: x[1]['change_pc'],
+                reverse=True
+            )
+            
+            # Top 10 Gainers
+            gainers = [s for s in sorted_stocks if s[1]['change_pc'] > 0][:10]
+            if gainers:
+                msg += "\n📈 **TOP 10 TĂNG MẠNH:**\n"
+                for symbol, data in gainers:
+                    price_k = data['price'] / 1000
+                    vol_k = data.get('total_vol', 0) / 1000
+                    msg += f"• **{symbol}**: +{data['change_pc']:.2f}% | {price_k:.1f}k | Vol: {vol_k:.0f}k\n"
+            
+            # Top 10 Losers
+            losers = sorted(
+                [s for s in sorted_stocks if s[1]['change_pc'] < 0],
+                key=lambda x: x[1]['change_pc']
+            )[:10]
+            if losers:
+                msg += "\n📉 **TOP 10 GIẢM MẠNH:**\n"
+                for symbol, data in losers:
+                    price_k = data['price'] / 1000
+                    vol_k = data.get('total_vol', 0) / 1000
+                    msg += f"• **{symbol}**: {data['change_pc']:.2f}% | {price_k:.1f}k | Vol: {vol_k:.0f}k\n"
+        else:
+            msg += "\n⏳ Chưa có dữ liệu biến động...\n"
+            
+        return msg
+
 
     def send_alert(self, symbol, price, change_pc, total_vol, order_value, vol, side="Unknown"):
         print(f"🔍 DEBUG: send_alert called for {symbol}. ChatID: {self.alert_chat_id}")
@@ -300,24 +411,17 @@ class SharkHunterService:
         val_billion = order_value / 1_000_000_000
         time_str = datetime.now().strftime("%H:%M:%S")
         
-        # Determine Title
-        if side == "Buy":
-            title = "🚨 CÁ MẬP GOM HÀNG (MUA)"
-        elif side == "Sell":
-            title = "🚨 CÁ MẬP XẢ HÀNG (BÁN)"
-        else:
-            title = "🚨 CÁ MẬP VÀO HÀNG"
+        # Simple title - no buy/sell distinction
+        title = "🦈 CÁ MẬP XUẤT HIỆN"
 
         msg = (
-            f"**{title}**: #{symbol}\n"
+            f"{title} 🕐 {time_str}\n"
+            f"#{symbol} - 💰 {val_billion:,.1f} Tỷ VNĐ\n"
             f"=============================\n"
-            f"💰 **GIÁ TRỊ: {val_billion:,.1f} Tỷ VNĐ**\n"
-            f"=============================\n"
-            f"⚡ **Chi tiết lệnh**:\n"
-            f"• Thời gian: `{time_str}`\n"
-            f"• Khối lượng: `{vol:,.0f}` cp\n"
-            f"• Giá khớp: `{price:,.0f}` ({change_pc:+.2f}% {icon})\n"
-            f"• Tổng Vol phiên: `{total_vol:,.0f}`\n"
+            f"⚡ Chi tiết lệnh:\n"
+            f"• Khối lượng: {vol:,.0f} cp\n"
+            f"• Giá khớp: {price:,.0f} ({change_pc:+.2f}% {icon})\n"
+            f"• Tổng Vol phiên: {total_vol:,.0f}\n"
             f"=============================\n"
             f"⏳ Cooldown: Sẽ không báo lại trong {self.cooldown//60}p"
         )
@@ -328,6 +432,36 @@ class SharkHunterService:
             print(f"✅ Alert Sent for {symbol}")
         except Exception as e:
             print(f"❌ SEND ERROR: {e}")
+
+    def _send_volatility_alert(self, symbol, change_pc, price, total_vol, direction, icon):
+        """Send alert for high volatility stock movements."""
+        if not self.alert_chat_id:
+            return
+        
+        price_k = price / 1000
+        vol_k = total_vol / 1000  # Convert to thousands for display
+        time_str = datetime.now().strftime("%H:%M:%S")
+        
+        title = f"📊 BIẾN ĐỘNG MẠNH - {direction}"
+        
+        msg = (
+            f"{title} 🕐 {time_str}\n"
+            f"#{symbol} {icon} {change_pc:+.2f}%\n"
+            f"=============================\n"
+            f"⚡ Chi tiết:\n"
+            f"• Giá hiện tại: {price_k:,.1f}k\n"
+            f"• Biến động: {change_pc:+.2f}%\n"
+            f"• Tổng Vol: {vol_k:,.0f}k cp\n"
+            f"=============================\n"
+            f"⏳ Cooldown: Sẽ không báo lại trong 1 giờ"
+        )
+        
+        try:
+            print(f"📊 Sending VOLATILITY alert for {symbol} ({change_pc:+.2f}%, Vol: {vol_k:.0f}k)")
+            self.bot.send_message(self.alert_chat_id, msg)
+            print(f"✅ Volatility Alert Sent for {symbol}")
+        except Exception as e:
+            print(f"❌ VOLATILITY ALERT ERROR: {e}")
 
     # Helper Methods
     def _do_maintenance(self):

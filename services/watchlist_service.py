@@ -92,3 +92,8 @@ class WatchlistService:
         # Sort by newest first
         sorted_items.sort(key=lambda x: x['entry_time'], reverse=True)
         return sorted_items
+
+    def clear_watchlist(self):
+        """Clears all entries from watchlist."""
+        self._save_data({})
+        print("🧹 Watchlist cleared.")

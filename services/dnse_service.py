@@ -35,6 +35,9 @@ class DNSEService:
         
         self.is_shark_active = False
         
+        # MQTT Stability: Track active subscriptions for auto-restore
+        self.active_subscriptions = set()
+        
         # Connect immediately
         # self.connect() # Removed auto-connect in init to control explicitly or keep?
         # Keeping it compatible with existing code usage
@@ -98,6 +101,7 @@ class DNSEService:
             if "ohlc/stock/1D" in topic and self.ohlc_global_handler:
                 self.ohlc_global_handler(payload)
 
+            # Route Stock Info messages (original  configuration)
             if "stockinfo/v1/roundlot" in topic and self.tick_global_handler:
                 self.tick_global_handler(payload)
             
@@ -112,6 +116,19 @@ class DNSEService:
         except Exception as e:
             # print(f"Message Error: {e}")
             pass
+
+    def on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties=None):
+        """Handle MQTT disconnection with auto-reconnect"""
+        print(f"⚠️ MQTT Disconnected: {reason_code}")
+        if reason_code != 0:
+            print("🔄 Unexpected disconnect. Attempting reconnect in 5s...")
+            try:
+                time.sleep(5)
+                self.connect()
+                self._restore_subscriptions()
+            except Exception as e:
+                print(f"❌ Reconnect failed: {e}")
+
 
     def connect(self):
         if not self.authenticate():
@@ -132,8 +149,10 @@ class DNSEService:
         
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
+        self.client.on_disconnect = self.on_disconnect
         
-        self.client.connect(self.broker_host, self.broker_port, keepalive=60)
+        # Increased keepalive from 60 to 300 seconds for better stability
+        self.client.connect(self.broker_host, self.broker_port, keepalive=300)
         self.client.loop_start()
         return True
 
@@ -175,16 +194,29 @@ class DNSEService:
              self.subscribe_all_markets()
 
     def subscribe_all_markets(self):
-        if not self.client or not self.client.is_connected():
-            self.connect()
+        """Subscribe to Stock Info topic for shark detection."""
+        if not self.client:
+            print("⚠️ Cannot subscribe: MQTT client not initialized")
+            return
             
+        # Subscribe to Stock Info Topic (original configuration)
         topic_stock = "plaintext/quotes/krx/mdds/stockinfo/v1/roundlot/symbol/+"
         self.client.subscribe(topic_stock, qos=0)
-        
-        # Also Subscribe to Tick Topic Wildcard
-        topic_tick = "plaintext/quotes/krx/mdds/tick/v1/roundlot/symbol/+"
-        self.client.subscribe(topic_tick, qos=0)
+        self.active_subscriptions.add(topic_stock)
         
         # DEBUG: Explicitly subscribe to FOX for user test
-        self.client.subscribe("plaintext/quotes/krx/mdds/stockinfo/v1/roundlot/symbol/FOX", qos=0)
-        print(f"🦈 Subscribed to Wildcards: Stock & Tick. And FOX.")
+        topic_fox = "plaintext/quotes/krx/mdds/stockinfo/v1/roundlot/symbol/FOX"
+        self.client.subscribe(topic_fox, qos=0)
+        self.active_subscriptions.add(topic_fox)
+        print(f"🦈 Subscribed to Stock Info topic (original config).")
+
+    def _restore_subscriptions(self):
+        """Re-subscribe to all topics after reconnection"""
+        if not self.active_subscriptions:
+            print("   No subscriptions to restore.")
+            return
+            
+        print(f"🔄 Restoring {len(self.active_subscriptions)} subscriptions...")
+        for topic in self.active_subscriptions:
+            self.client.subscribe(topic, qos=1)
+            print(f"   ✅ Re-subscribed: {topic}")

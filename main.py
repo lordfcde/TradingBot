@@ -113,6 +113,15 @@ def on_shark_on(message):
     
     bot.reply_to(message, "🦈 **ĐÃ BẬT CẢNH BÁO CÁ MẬP!**\n\n- Bot sẽ quét toàn bộ thị trường.\n- Lọc lệnh > 1 Tỷ VNĐ.\n\n⚡ **Test Mode**: Đang theo dõi FOX (báo 3 lệnh tiếp theo).")
 
+@bot.message_handler(commands=['watchlist_clear'])
+def watchlist_clear(message):
+    """Clear all entries from watchlist"""
+    try:
+        watchlist_viewer.clear_watchlist()
+        bot.reply_to(message, "✅ Đã xóa toàn bộ Watchlist!")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi khi xóa watchlist: {e}")
+
 @bot.message_handler(commands=['shark_stats', 'sharks'])
 def on_shark_stats(message):
     report = shark_service.get_stats_report()
@@ -133,6 +142,10 @@ def on_text(message):
         handle_stock_search_request(bot, message, dnse_service, shark_service)
     elif text == "⭐ Watchlist":
         handle_show_watchlist(bot, message, watchlist_viewer)
+    elif text == "📊 Biến Động Mạnh":
+        # Show volatility report
+        report = shark_service.get_volatility_report()
+        bot.send_message(message.chat.id, report, parse_mode='Markdown')
     elif text == "🔙 Quay lại":
         handle_back_main(bot, message)
 
