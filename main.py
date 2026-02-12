@@ -257,7 +257,32 @@ def on_text(message):
 if __name__ == "__main__":
     print("🚀 Super Bot đang chạy... (Nhấn Ctrl+C để dừng)")
     try:
-        bot.infinity_polling()
+        # ==========================================
+        # 7. DUMMY WEB SERVER (FOR RENDER DEPLOYMENT)
+        # ==========================================
+        from flask import Flask
+        import threading
+        import os
+
+        app = Flask(__name__)
+
+        @app.route('/')
+        def health_check():
+            return "Bot is running! 🚀", 200
+
+        def run_web_server():
+            port = int(os.environ.get("PORT", 8080))
+            print(f"🌍 Starting Web Server on port {port}")
+            app.run(host='0.0.0.0', port=port)
+
+        # Start Web Server in Background Thread
+        threading.Thread(target=run_web_server, daemon=True).start()
+
+        # ==========================================
+
+        print("🚀 Bot đã sẵn sàng nhận lệnh!")
+        bot.polling(none_stop=True)
+
     except KeyboardInterrupt:
         print("\n🛑 Bot đã dừng.")
     except Exception as e:
