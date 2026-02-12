@@ -193,22 +193,6 @@ def on_shark_stats(message):
     report = shark_service.get_stats_report()
     bot.send_message(message.chat.id, report, parse_mode='Markdown')
 
-# --- Text Filters (Router) ---
-@bot.message_handler(func=lambda message: True)
-def on_text(message):
-    text = message.text
-    
-    if text == "🌟 Giá Vàng Thế Giới":
-        handle_gold_price(bot, message, gold_service)
-    elif text == "🇻🇳 Cổ Phiếu Việt Nam":
-        handle_vn_stock(bot, message)
-    elif text == "📊 Tổng quan thị trường":
-        handle_market_overview(bot, message, dnse_service)
-    elif text == "🔎 Tra cứu Cổ phiếu": # This text-based entry point is kept for direct text input
-        handle_stock_search_request(bot, message, dnse_service, shark_service, vnstock_service, trinity_monitor)
-    elif text == "⭐ Watchlist":
-        handle_show_watchlist(bot, message, watchlist_viewer)
-
 # --- Callback Query Handlers ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith('watchlist_'))
 def watchlist_callback(call):
@@ -227,7 +211,24 @@ def watchlist_callback(call):
         print(f"Callback error: {e}")
         bot.answer_callback_query(call.id, "❌ Lỗi xử lý")
 
+# --- Text Message Handlers ---
 
+@bot.message_handler(func=lambda message: True)
+def on_text(message):
+    text = message.text
+    
+    if text == "👋 Trang chủ":
+        handle_home(bot, message)
+    elif text == "🌟 Giá Vàng Thế Giới":
+        handle_gold_price(bot, message, gold_service)
+    elif text == "🇻🇳 Cổ Phiếu Việt Nam":
+        handle_vn_stock(bot, message)
+    elif text == "📊 Tổng quan thị trường":
+        handle_market_overview(bot, message, dnse_service)
+    elif text == "🔎 Tra cứu Cổ phiếu": # This text-based entry point is kept for direct text input
+        handle_stock_search_request(bot, message, dnse_service, shark_service, vnstock_service, trinity_monitor)
+    elif text == "⭐ Watchlist":
+        handle_show_watchlist(bot, message, watchlist_viewer)
     elif text == "🔙 Quay lại":
         handle_back_main(bot, message)
 
