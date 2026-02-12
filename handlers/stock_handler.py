@@ -420,27 +420,50 @@ def handle_show_watchlist(bot, message, watchlist_service):
     try:
         items = watchlist_service.get_active_watchlist()
         
-        if not items:
-            bot.reply_to(message, "📭 Watchlist của bạn đang trống.\n(Hệ thống chưa phát hiện Cá Mập nào trong 3 ngày qua)")
-            return
-            
-        # Format list
+        # Build message with current watchlist
         lines = []
-        for idx, item in enumerate(items, 1):
-            sym = item['symbol']
-            t_str = item['time_str']
-            lines.append(f"{idx}. **#{sym}** (Báo: {t_str})")
+        if items:
+            lines.append("-----------------------------------")
+            lines.append("⭐ **WATCHLIST HIỆN TẠI** (72h)")
+            lines.append("-----------------------------------")
+            for idx, item in enumerate(items[:10], 1):
+                sym = item['symbol']
+                t_str = item['time_str']
+                lines.append(f"{idx}. **#{sym}** (Báo: {t_str})")
             
-        list_str = "\n".join(lines)
+            if len(items) > 10:
+                lines.append(f"... và {len(items)-10} mã khác")
+        else:
+            lines.append("📭 Watchlist hiện tại đang trống")
         
-        msg = (
-            f"-----------------------------------\n"
-            f"⭐ **DANH SÁCH CÁ MẬP** (3 Ngày qua)\n"
-            f"-----------------------------------\n"
-            f"{list_str}\n"
-            f"-----------------------------------\n"
-            f"💡 Các mã sẽ tự động xóa sau 72h."
-        )
+        # Add history section
+        lines.append("\n📊 **LỊCH SỬ 7 NGÀY GẦN NHẤT:**")
+        lines.append("-----------------------------------")
+        
+        history_file = "watchlist_history.txt"
+        try:
+            import os
+            if os.path.exists(history_file):
+                with open(history_file, 'r', encoding='utf-8') as f:
+                    all_lines = f.readlines()
+                
+                if all_lines:
+                    # Show last 7 days
+                    recent = all_lines[-7:]
+                    for line in recent:
+                        lines.append(line.strip())
+                else:
+                    lines.append("(Chưa có lịch sử)")
+            else:
+                lines.append("(Chưa có lịch sử)")
+        except Exception as e:
+            print(f"History read error: {e}")
+            lines.append("(Lỗi đọc lịch sử)")
+        
+        lines.append("-----------------------------------")
+        lines.append("💡 Watchlist tự động xóa sau 72h")
+        
+        msg = "\n".join(lines)
         bot.reply_to(message, msg, parse_mode='Markdown')
         
     except Exception as e:
