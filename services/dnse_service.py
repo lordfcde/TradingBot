@@ -131,58 +131,75 @@ class DNSEService:
 
 
     def connect(self):
+        print("🔹 DEBUG: Attempting to connect to DNSE...")
         if not self.authenticate():
+            print("❌ connect() aborted due to Auth failure.")
             return False
             
-        client_id = f"dnse-bot-{int(time.time())}"
-        self.client = mqtt.Client(
-            mqtt.CallbackAPIVersion.VERSION2,
-            client_id,
-            protocol=mqtt.MQTTv5,
-            transport="websockets"
-        )
-        
-        self.client.username_pw_set(self.investor_id, self.token)
-        self.client.tls_set(cert_reqs=ssl.CERT_NONE)
-        self.client.tls_insecure_set(True)
-        self.client.ws_set_options(path="/wss")
-        
-        self.client.on_connect = self.on_connect
-        self.client.on_message = self.on_message
-        self.client.on_disconnect = self.on_disconnect
-        
-        # Increased keepalive from 60 to 300 seconds for better stability
-        self.client.connect(self.broker_host, self.broker_port, keepalive=300)
-        self.client.loop_start()
-        return True
+        try:
+            client_id = f"dnse-bot-{int(time.time())}"
+            self.client = mqtt.Client(
+                mqtt.CallbackAPIVersion.VERSION2,
+                client_id,
+                protocol=mqtt.MQTTv5,
+                transport="websockets"
+            )
+            
+            self.client.username_pw_set(self.investor_id, self.token)
+            self.client.tls_set(cert_reqs=ssl.CERT_NONE)
+            self.client.tls_insecure_set(True)
+            self.client.ws_set_options(path="/wss")
+            
+            self.client.on_connect = self.on_connect
+            self.client.on_message = self.on_message
+            self.client.on_disconnect = self.on_disconnect
+            
+            # Increased keepalive from 60 to 300 seconds for better stability
+            self.client.connect(self.broker_host, self.broker_port, keepalive=300)
+            self.client.loop_start()
+            print("✅ MQTT Loop started.")
+            return True
+        except Exception as e:
+            print(f"❌ MQTT Client Init Error: {e}")
+            return False
 
     def get_realtime_price(self, symbol, callback):
         if not self.client or not self.client.is_connected():
-            print("Client disconneted. Reconnecting...")
-            self.connect()
+            print("Client disconnected. Reconnecting...")
+            if not self.connect():
+                print("❌ Could not reconnect in get_realtime_price")
+                return
 
         symbol = symbol.upper()
         self.callbacks[symbol] = callback
         topic = f"plaintext/quotes/krx/mdds/stockinfo/v1/roundlot/symbol/{symbol}"
-        self.client.subscribe(topic, qos=1)
-        print(f"🔹 Subscribed to: {topic}")
+        if self.client:
+            self.client.subscribe(topic, qos=1)
+            print(f"🔹 Subscribed to: {topic}")
 
     def get_market_index(self, index_id, callback):
         if not self.client or not self.client.is_connected():
-            self.connect()
+            if not self.connect():
+                return
         index_id = index_id.upper()
         self.callbacks[index_id] = callback
         topic = f"plaintext/quotes/krx/mdds/index/{index_id}"
-        self.client.subscribe(topic, qos=1)
+        if self.client:
+            self.client.subscribe(topic, qos=1)
 
     def get_multiple_indices(self, indices, callback):
         if not self.client or not self.client.is_connected():
-            self.connect()
+            print("🔹 Connecting for indices...")
+            if not self.connect():
+                print("❌ Connection failed in get_multiple_indices")
+                return
+
         for idx in indices:
             idx = idx.upper()
             self.callbacks[idx] = callback
             topic = f"plaintext/quotes/krx/mdds/index/{idx}"
-            self.client.subscribe(topic, qos=1)
+            if self.client:
+                self.client.subscribe(topic, qos=1)
 
     def register_shark_streams(self, ohlc_cb, tick_cb):
         self.ohlc_global_handler = ohlc_cb
