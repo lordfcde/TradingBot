@@ -1,4 +1,4 @@
 pyTelegramBotAPI
 yfinance
-
+pandas_ta
 watchdog

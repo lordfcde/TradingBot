@@ -40,7 +40,8 @@ def create_stock_menu():
         types.KeyboardButton("⭐ Watchlist")
     )
     # Row 3 - New Volatility button
-    markup.add(types.KeyboardButton("📊 Biến Động Mạnh"))
+    # Row 3 - New Volatility button - REMOVED
+    # markup.add(types.KeyboardButton("📊 Biến Động Mạnh"))
     # Row 4 (Back)
     markup.add(types.KeyboardButton("🔙 Quay lại"))
     

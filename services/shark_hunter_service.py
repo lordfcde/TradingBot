@@ -20,10 +20,14 @@ VOLATILITY_THRESHOLD = 5.0  # Alert if price change >= ±5%
 MIN_VOLUME_FOR_VOLATILITY = 200_000  # Minimum total volume to trigger volatility alert
 
 class SharkHunterService:
-    def __init__(self, bot):
+    def __init__(self, bot, vnstock_service=None):
         self.bot = bot
         self.alert_chat_id = self._load_bot_config()
         self.watchlist_service = WatchlistService()
+        self.vnstock_service = vnstock_service  # For fetching avg volume
+        self.trinity_monitor = None
+        self.trinity_cache = {} # Cache for Trinity checks (symbol: timestamp)
+        self.analyzer = None  # TrinityAnalyzer for hybrid signals
         
         # Load Dictionary Config
         self.config = self._load_dictionary()
@@ -40,6 +44,7 @@ class SharkHunterService:
         self.shark_stats = {}
         self.trade_history = []  # Store detailed trade logs
         self.price_tracker = {}  # Track price changes for all stocks
+        self.avg_volume_cache = {}  # Cache avg volume to reduce API calls
         
         self.last_maintenance = time.time()
         self.last_reset_date = datetime.now().strftime("%Y-%m-%d")
@@ -48,10 +53,21 @@ class SharkHunterService:
         print(f"🦈 Shark Hunter Service Ready (Dict-Driven)")
         print(f"   - Threshold: {self.min_value/1e9} Billion VND")
         print(f"   - Cooldown: {self.cooldown}s")
+        print(f"   - Watchlist: Volume-based (current > 120% of 5d avg)")
         print(f"   - Start Time: {self.start_time}")
         
         # TEST: FOX Monitoring
         self.fox_test_count = 0
+        
+    def set_trinity_monitor(self, monitor):
+        """Inject Trinity Monitor dependency"""
+        self.trinity_monitor = monitor
+        print("✅ Shark Hunter: Trinity Monitor connected.")
+
+    def set_analyzer(self, analyzer):
+        """Inject TrinityAnalyzer for hybrid Shark+Trinity signals"""
+        self.analyzer = analyzer
+        print("✅ Shark Hunter: TrinityAnalyzer connected (Hybrid Mode).")
         
     def enable_alerts(self, chat_id):
         """Enable alerts for this chat ID and verify stream subscription."""
@@ -117,11 +133,19 @@ class SharkHunterService:
             print(f"Tick received: {symbol}", end="\r")
 
             # Time Check
+            # Time Check (Strict Trading Hours)
             current_hm = datetime.now().strftime("%H:%M")
+            
+            # 1. Start Time Check (09:00 default)
             if current_hm < self.start_time:
-                # pass # Bypass time check for FOX test? 
-                # Better to keep time check active, user is testing now (active session).
-                pass
+                # print(f"⏳ Before Start Time ({self.start_time}). Tick ignored.", end="\r")
+                return 
+
+            # 2. End Time Check (15:00 - Stop scanning)
+            # Allow up to 15:15 for ATC/Run-off, then hard stop.
+            if current_hm > "15:15":
+                # print(f"🛑 After Market Close (15:00). Tick ignored.", end="\r")
+                return
 
             # Value Extraction (Dictionary Compatible + Fallbacks)
             raw_vol = int(
@@ -197,30 +221,48 @@ class SharkHunterService:
                 return
 
             # It is a SHARK order!
-            # 1. Count trend FIRST (including current trade)
-            # User Request: At least 3 orders in 5 MINUTES
-            valid_trend_count = 1  # Start with 1 for current trade
-            fmt = "%H:%M:%S"
-            now_dt = datetime.now()
+            # NEW LOGIC: Check if current volume > 120% of 5-day avg volume
+            print(f"🔍 WATCHLIST CHECK: {symbol} - Shark order detected (total_vol: {total_vol:,.0f})")
             
-            # Look back in history (reversed for speed)
-            for trade in reversed(self.trade_history):
-                if trade['symbol'] == symbol:
-                    try:
-                        t_dt = datetime.strptime(trade['time'], fmt).replace(year=now_dt.year, month=now_dt.month, day=now_dt.day)
-                        # Handle potential day wrap (unlikely for intraday bot)
-                        delta = (now_dt - t_dt).total_seconds()
-                        if 0 <= delta <= 300:  # 5 Minutes (300 seconds)
-                            valid_trend_count += 1
+            # Check volume condition for watchlist
+            if self.vnstock_service and total_vol > 0:
+                try:
+                    # Check if we have cached avg volume (cache for 1 hour)
+                    cache_key = symbol
+                    now = time.time()
+                    
+                    if cache_key in self.avg_volume_cache:
+                        cached_data = self.avg_volume_cache[cache_key]
+                        # Cache valid for 1 hour
+                        if (now - cached_data['timestamp']) < 3600:
+                            avg_vol_5d = cached_data['avg_vol']
+                            print(f"  📦 Using cached avg vol for {symbol}: {avg_vol_5d:,.0f}")
                         else:
-                            # If we hit a trade older than 5m, stop searching
-                            if delta > 300: break 
-                    except: pass
-            
-            # Add to watchlist if 3+ shark trades in 5 mins
-            if valid_trend_count >= 3:
-                self.watchlist_service.add_to_watchlist(symbol)
-                print(f"🔥 HOT TREND: {symbol} in Watchlist ({valid_trend_count} sharks/5m)")
+                            # Cache expired, fetch new
+                            avg_vol_5d = self._fetch_avg_volume(symbol)
+                    else:
+                        # No cache, fetch
+                        avg_vol_5d = self._fetch_avg_volume(symbol)
+                    
+                    if avg_vol_5d > 0:
+                        volume_threshold = avg_vol_5d * 1.2  # 120% of avg
+                        vol_ratio = (total_vol / avg_vol_5d) * 100
+                        
+                        print(f"  📊 {symbol}: Current vol = {total_vol:,.0f}, Avg 5d = {avg_vol_5d:,.0f} ({vol_ratio:.1f}%)")
+                        
+                        if total_vol >= volume_threshold:
+                            self.watchlist_service.add_to_watchlist(symbol)
+                            print(f"🔥 WATCHLIST ADDED: {symbol} - Volume {vol_ratio:.1f}% of avg (>{120}%)")
+                        else:
+                            print(f"  ⚠️ {symbol} volume too low for watchlist ({vol_ratio:.1f}% < 120%)")
+                    else:
+                        print(f"  ⚠️ Could not get avg volume for {symbol}, skipping watchlist check")
+                        
+                except Exception as e:
+                    print(f"  ❌ Watchlist volume check error for {symbol}: {e}")
+            else:
+                if not self.vnstock_service:
+                    print(f"  ⚠️ vnstock service not available, cannot check volume")
             
             # 2. Update Statistics and add to history AFTER counting
             self._update_stats(symbol, order_value, change_pc, side)
@@ -240,6 +282,18 @@ class SharkHunterService:
             # 4. Trigger Alert
             self.alert_history[alert_key] = now
             self.send_alert(symbol, real_price, change_pc, total_vol, order_value, vol, side)
+            
+            # 5. Hybrid Analysis (Async) — Shark + Trinity
+            if self.analyzer:
+                threading.Thread(
+                    target=self._run_hybrid_analysis,
+                    args=(symbol, real_price, change_pc, total_vol, order_value, vol, side),
+                    daemon=True
+                ).start()
+            elif side == "Buy" and self.trinity_monitor:
+                # Fallback to old trinity check if analyzer not set
+                threading.Thread(target=self._check_trinity_signal, args=(symbol,), daemon=True).start()
+
 
         except Exception as e:
             print(f"❌ Tick Processing Error: {e}")
@@ -274,12 +328,47 @@ class SharkHunterService:
             'change': change_pc,
             'side': side
         })
-        # Keep last 50
-        if len(self.trade_history) > 50:
+        # Keep last 200 trades (increased for better watchlist tracking)
+        if len(self.trade_history) > 200:
             self.trade_history.pop(0)
 
         # Persistence: Save immediately
         self._save_stats()
+
+    def _fetch_avg_volume(self, symbol):
+        """
+        Fetch 5-day average volume from vnstock API.
+        Caches result for 1 hour to reduce API calls.
+        
+        Returns:
+            int: 5-day average volume or 0 if error
+        """
+        try:
+            if not self.vnstock_service:
+                return 0
+            
+            # Get stock data with avg_vol_5d
+            stock_data = self.vnstock_service.get_stock_info(symbol)
+            
+            if stock_data and 'avg_vol_5d' in stock_data:
+                avg_vol = stock_data['avg_vol_5d']
+                
+                # Cache the result
+                self.avg_volume_cache[symbol] = {
+                    'avg_vol': avg_vol,
+                    'timestamp': time.time()
+                }
+                
+                print(f"  📥 Fetched avg vol for {symbol}: {avg_vol:,.0f} (cached for 1h)")
+                return avg_vol
+            else:
+                print(f"  ⚠️ No avg_vol_5d data for {symbol}")
+                return 0
+                
+        except Exception as e:
+            print(f"  ❌ Error fetching avg volume for {symbol}: {e}")
+            return 0
+
 
     def get_stats_report(self):
         """Generate a summary report of Shark activity."""
@@ -326,79 +415,10 @@ class SharkHunterService:
             icon = "🟢 MUA" if s == "Buy" else "🔴 BÁN" if s == "Sell" else "⚪️ ?"
             msg += f"• `{trade['time']}` {icon} **{trade['symbol']}**: {val_billion:.1f} Tỷ\n"
         
-        # === PRICE VOLATILITY SECTION ===
-        msg += "\n📊 **BIẾN ĐỘNG MẠNH HÔM NAY:**\n"
-        msg += "=============================\n"
-        
-        if self.price_tracker:
-            # Get top gainers and losers
-            sorted_stocks = sorted(
-                self.price_tracker.items(),
-                key=lambda x: x[1]['change_pc'],
-                reverse=True
-            )
-            
-            # Top 5 Gainers
-            gainers = [s for s in sorted_stocks if s[1]['change_pc'] > 0][:5]
-            if gainers:
-                msg += "📈 **TOP TĂNG MẠNH:**\n"
-                for symbol, data in gainers:
-                    price_k = data['price'] / 1000
-                    msg += f"• **{symbol}**: +{data['change_pc']:.2f}% ({price_k:.1f}k)\n"
-            
-            # Top 5 Losers
-            losers = sorted(
-                [s for s in sorted_stocks if s[1]['change_pc'] < 0],
-                key=lambda x: x[1]['change_pc']
-            )[:5]
-            if losers:
-                msg += "\n📉 **TOP GIẢM MẠNH:**\n"
-                for symbol, data in losers:
-                    price_k = data['price'] / 1000
-                    msg += f"• **{symbol}**: {data['change_pc']:.2f}% ({price_k:.1f}k)\n"
-        else:
-            msg += "⏳ Chưa có dữ liệu biến động...\n"
-            
         return msg
 
     def get_volatility_report(self):
-        """Generate standalone volatility report for menu."""
-        msg = "📊 **BIẾN ĐỘNG MẠNH HÔM NAY**\n"
-        msg += f"🕒 Cập nhật: {datetime.now().strftime('%H:%M:%S')}\n"
-        msg += "=============================\n"
-        
-        if self.price_tracker:
-            # Get top gainers and losers
-            sorted_stocks = sorted(
-                self.price_tracker.items(),
-                key=lambda x: x[1]['change_pc'],
-                reverse=True
-            )
-            
-            # Top 10 Gainers
-            gainers = [s for s in sorted_stocks if s[1]['change_pc'] > 0][:10]
-            if gainers:
-                msg += "\n📈 **TOP 10 TĂNG MẠNH:**\n"
-                for symbol, data in gainers:
-                    price_k = data['price'] / 1000
-                    vol_k = data.get('total_vol', 0) / 1000
-                    msg += f"• **{symbol}**: +{data['change_pc']:.2f}% | {price_k:.1f}k | Vol: {vol_k:.0f}k\n"
-            
-            # Top 10 Losers
-            losers = sorted(
-                [s for s in sorted_stocks if s[1]['change_pc'] < 0],
-                key=lambda x: x[1]['change_pc']
-            )[:10]
-            if losers:
-                msg += "\n📉 **TOP 10 GIẢM MẠNH:**\n"
-                for symbol, data in losers:
-                    price_k = data['price'] / 1000
-                    vol_k = data.get('total_vol', 0) / 1000
-                    msg += f"• **{symbol}**: {data['change_pc']:.2f}% | {price_k:.1f}k | Vol: {vol_k:.0f}k\n"
-        else:
-            msg += "\n⏳ Chưa có dữ liệu biến động...\n"
-            
-        return msg
+        return "⚠️ Tính năng Biến Động Mạnh đã được tắt theo yêu cầu."
 
 
     def send_alert(self, symbol, price, change_pc, total_vol, order_value, vol, side="Unknown"):
@@ -435,33 +455,160 @@ class SharkHunterService:
 
     def _send_volatility_alert(self, symbol, change_pc, price, total_vol, direction, icon):
         """Send alert for high volatility stock movements."""
+        # DISABLED AS PER USER REQUEST (Too much noise / low liquidity)
+        pass 
+        # Original logic removed to stop alerts
+
+    def _run_hybrid_analysis(self, symbol, price, change_pc, total_vol, order_value, vol, side):
+        """
+        Hybrid Shark + Trinity: Run TrinityAnalyzer on 15m data after shark detection.
+        Sends premium HTML SUPER SIGNAL alert.
+        """
+        try:
+            now = time.time()
+
+            # 1. Cache check (avoid API spam: 60s cache per symbol)
+            cached = self.trinity_cache.get(symbol)
+            if cached and (now - cached['time'] < 60):
+                analysis = cached['data']
+                print(f"⚡ Analyzer Cache Hit for {symbol}")
+            else:
+                print(f"🦈🧠 Running Hybrid Analysis for: {symbol}...")
+                analysis = self.analyzer.check_signal(symbol)
+                self.trinity_cache[symbol] = {'time': now, 'data': analysis}
+
+            # 2. Send SUPER SIGNAL alert (HTML)
+            self.send_super_signal(symbol, price, change_pc, order_value, vol, side, analysis)
+
+            # 3. Save enriched data to watchlist
+            shark_data = {
+                'price': price, 'change_pc': change_pc,
+                'order_value': order_value, 'vol': vol, 'side': side,
+            }
+            self.watchlist_service.add_enriched(symbol, shark_data, analysis)
+
+        except Exception as e:
+            print(f"❌ Hybrid Analysis Error for {symbol}: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def send_super_signal(self, symbol, price, change_pc, order_value, vol, side, analysis):
+        """
+        Send premium HTML SUPER SIGNAL alert combining Shark + Trinity data.
+        """
         if not self.alert_chat_id:
             return
-        
-        price_k = price / 1000
-        vol_k = total_vol / 1000  # Convert to thousands for display
-        time_str = datetime.now().strftime("%H:%M:%S")
-        
-        title = f"📊 BIẾN ĐỘNG MẠNH - {direction}"
-        
-        msg = (
-            f"{title} 🕐 {time_str}\n"
-            f"#{symbol} {icon} {change_pc:+.2f}%\n"
-            f"=============================\n"
-            f"⚡ Chi tiết:\n"
-            f"• Giá hiện tại: {price_k:,.1f}k\n"
-            f"• Biến động: {change_pc:+.2f}%\n"
-            f"• Tổng Vol: {vol_k:,.0f}k cp\n"
-            f"=============================\n"
-            f"⏳ Cooldown: Sẽ không báo lại trong 1 giờ"
-        )
-        
+
         try:
-            print(f"📊 Sending VOLATILITY alert for {symbol} ({change_pc:+.2f}%, Vol: {vol_k:.0f}k)")
-            self.bot.send_message(self.alert_chat_id, msg)
-            print(f"✅ Volatility Alert Sent for {symbol}")
+            rating = analysis.get('rating', 'WATCH')
+            error  = analysis.get('error')
+
+            # ── Shark section ───────────────────────────────
+            val_billion = order_value / 1_000_000_000
+            pct_icon = "📈" if change_pc >= 0 else "📉"
+            side_icon = "🟢 MUA" if side == "Buy" else "🔴 BÁN" if side == "Sell" else "⚪ ?"
+
+            # ── Trinity section ─────────────────────────────
+            if error:
+                trend_icon = "⚠️"
+                trend_text = f"N/A ({error})"
+                cmf_icon   = "⚠️"
+                cmf_text   = "N/A"
+                rsi_val    = "N/A"
+            else:
+                # Trend
+                trend_raw = analysis.get('trend', 'N/A')
+                if 'UPTREND' in trend_raw:
+                    trend_icon = "🟢"
+                    trend_text = "Giá > EMA50 (Tăng)"
+                elif 'SIDEWAY' in trend_raw:
+                    trend_icon = "🟡"
+                    trend_text = "Sideway"
+                else:
+                    trend_icon = "🔴"
+                    trend_text = "Giá < EMA50 (Giảm)"
+
+                # CMF
+                cmf_val = analysis.get('cmf', 0)
+                if cmf_val > 0.1:
+                    cmf_icon = "🟢"
+                    cmf_text = f"Dương mạnh ({cmf_val:.2f})"
+                elif cmf_val > 0:
+                    cmf_icon = "🟢"
+                    cmf_text = f"Dương ({cmf_val:.2f})"
+                else:
+                    cmf_icon = "🔴"
+                    cmf_text = f"Âm ({cmf_val:.2f})"
+
+                rsi_val = f"{analysis.get('rsi', 0):.1f}"
+
+            # ── Rating ──────────────────────────────────────
+            if rating == "BUY":
+                rating_text = "💎 MUA MẠNH — BUY"
+            else:
+                rating_text = "👀 THEO DÕI — WATCH"
+
+            time_str = datetime.now().strftime("%H:%M:%S")
+            cooldown_min = self.cooldown // 60 if self.cooldown >= 60 else 5
+
+            msg = (
+                f"💎 <b>SUPER SIGNAL: #{symbol}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🦈 <b>SHARK DETECTED (Real-time)</b>\n"
+                f"• Loại lệnh:    {side_icon}\n"
+                f"• Giá trị lệnh: <b>{val_billion:,.1f}</b> TỶ VNĐ\n"
+                f"• KL khớp:      {vol:,.0f} cp\n"
+                f"• Giá khớp:     {price:,.0f} ({change_pc:+.2f}% {pct_icon})\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🧠 <b>TRINITY ANALYSIS (15M)</b>\n"
+                f"• Xu hướng:    {trend_icon} {trend_text}\n"
+                f"• Dòng tiền:   {cmf_icon} {cmf_text}\n"
+                f"• RSI:         {rsi_val}\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🎯 <b>KẾT LUẬN: {rating_text}</b>\n"
+                f"⏰ {time_str} | ⏳ Cooldown: {cooldown_min}p | ✅ Saved to Watchlist"
+            )
+
+            self.bot.send_message(self.alert_chat_id, msg, parse_mode='HTML')
+            print(f"💎 SUPER SIGNAL sent: {symbol} — {rating}")
+
         except Exception as e:
-            print(f"❌ VOLATILITY ALERT ERROR: {e}")
+            print(f"❌ send_super_signal error for {symbol}: {e}")
+
+    def _check_trinity_signal(self, symbol):
+        """
+        Legacy Trinity check (fallback when analyzer is not set).
+        """
+        try:
+            if not self.trinity_monitor:
+                return
+
+            now = time.time()
+            cached = self.trinity_cache.get(symbol)
+            signal_data = None
+
+            if cached and (now - cached['time'] < 60):
+                signal_data = cached['data']
+            else:
+                signal_data = self.trinity_monitor.get_analysis(symbol)
+                self.trinity_cache[symbol] = {'time': now, 'data': signal_data}
+
+            if signal_data and signal_data.get('signal'):
+                sig_name = signal_data['signal']
+                self.watchlist_service.add_to_watchlist(symbol)
+
+                msg = (
+                    f"🦈🚀 <b>CÁ MẬP + TRINITY CONFIRMED!</b>\n"
+                    f"#{symbol}\n"
+                    f"💎 Tín hiệu: {sig_name}\n"
+                    f"🌊 Dòng tiền: {signal_data.get('cmf',0):.2f} ({signal_data.get('cmf_status','')})\n"
+                    f"✅ Đã thêm vào Watchlist!"
+                )
+                self.bot.send_message(self.alert_chat_id, msg, parse_mode='HTML')
+
+        except Exception as e:
+            print(f"❌ Trinity Check Error for {symbol}: {e}")
+
 
     # Helper Methods
     def _do_maintenance(self):
@@ -524,3 +671,49 @@ class SharkHunterService:
 
     def process_ohlc(self, payload):
         pass
+
+    def check_rsi_watchlist(self, symbol, rsi, current_vol, avg_vol_5d):
+        """
+        Check if stock should be added to watchlist based on RSI + volume.
+        Logic:
+        - RSI > 70 (Overbought) OR RSI < 30 (Oversold)
+        - Current Volume > 120% of 5-day Avg Volume
+        
+        Args:
+            symbol (str): Stock symbol
+            rsi (float): RSI value
+            current_vol (int): Current total volume
+            avg_vol_5d (int): 5-day average volume
+            
+        Returns:
+            bool: True if added, False otherwise
+        """
+        if rsi is None or avg_vol_5d == 0:
+            return False
+            
+        try:
+            # Check RSI condition
+            is_overbought = rsi > 70
+            is_oversold = rsi < 30
+            
+            if not (is_overbought or is_oversold):
+                return False
+                
+            # Check Volume condition
+            # Volume > 120% of avg
+            vol_ratio = current_vol / avg_vol_5d
+            is_high_volume = vol_ratio > 1.2
+            
+            if is_high_volume:
+                # Add to watchlist
+                self.watchlist_service.add_to_watchlist(symbol)
+                
+                signal = "QUÁ MUA" if is_overbought else "QUÁ BÁN"
+                print(f"🔥 RSI WATCHLIST ADDED: {symbol} - RSI {rsi:.1f} ({signal}) + Vol {vol_ratio*100:.0f}%")
+                return True
+                
+            return False
+            
+        except Exception as e:
+            print(f"❌ Error checking RSI watchlist for {symbol}: {e}")
+            return False

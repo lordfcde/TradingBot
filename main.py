@@ -6,6 +6,7 @@ import logging
 
 # Services
 from services.dnse_service import DNSEService
+from services.vnstock_service import VnstockService
 from services.gold_service import GoldService
 
 # Handlers
@@ -32,8 +33,14 @@ try:
     bot = telebot.TeleBot(config.API_TOKEN)
     print("✅ Bot đang khởi động...")
     
+    # Initialize Services
     dnse_service = DNSEService()
     gold_service = GoldService()
+    vnstock_service = VnstockService()  # New vnstock service
+    
+    # Note: Import Trinity after vnstock_service is created
+    from services.trinity_monitor import TrinitySignalMonitor
+    from services.analyzer import TrinityAnalyzer
 
     # Register Commands Hint
     print("🔹 Setting Search Commands...")
@@ -45,8 +52,11 @@ try:
         types.BotCommand("help", "ℹ️ Hướng dẫn sử dụng")
     ])
 
-    shark_service = SharkHunterService(bot)
+
+    shark_service = SharkHunterService(bot, vnstock_service)
     watchlist_viewer = WatchlistService() # For UI
+    trinity_monitor = TrinitySignalMonitor(bot, vnstock_service, watchlist_viewer)  # Trinity Signal Monitor
+
 
     # Auto-Start Scanner if configured
     if shark_service.alert_chat_id:
@@ -65,6 +75,20 @@ try:
             
             # Auto-Subscribe Hook
             if shark_service.alert_chat_id:
+                shark_service.enable_alerts(shark_service.alert_chat_id)
+                
+                # Auto-start Trinity Monitor as well
+                trinity_monitor.start_monitoring(shark_service.alert_chat_id)
+                print(f"🔄 Auto-Starting Trinity Monitor for Chat ID: {shark_service.alert_chat_id}")
+                
+                # Link Trinity to Shark Service
+                shark_service.set_trinity_monitor(trinity_monitor)
+
+                # Link Hybrid Analyzer to Shark Service
+                analyzer = TrinityAnalyzer()
+                shark_service.set_analyzer(analyzer)
+                
+                print("📡 Resuming Scanner Subscriptions...")
                 print("📡 Resuming Scanner Subscriptions...")
                 dnse_service.subscribe_all_markets()
                 # Force Test Alert to Verify Connectivity
@@ -114,13 +138,51 @@ def on_shark_on(message):
     bot.reply_to(message, "🦈 **ĐÃ BẬT CẢNH BÁO CÁ MẬP!**\n\n- Bot sẽ quét toàn bộ thị trường.\n- Lọc lệnh > 1 Tỷ VNĐ.\n\n⚡ **Test Mode**: Đang theo dõi FOX (báo 3 lệnh tiếp theo).")
 
 @bot.message_handler(commands=['watchlist_clear'])
-def watchlist_clear(message):
-    """Clear all entries from watchlist"""
-    try:
-        watchlist_viewer.clear_watchlist()
-        bot.reply_to(message, "✅ Đã xóa toàn bộ Watchlist!")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Lỗi khi xóa watchlist: {e}")
+def on_watchlist_clear(message):
+    chat_id = message.chat.id
+    watchlist_viewer.clear_watchlist()
+    bot.send_message(chat_id, "🗑️ Watchlist đã được xóa.")
+
+@bot.message_handler(commands=['trinity_on'])
+def on_trinity_on(message):
+    """Start Trinity Signal Monitor"""
+    chat_id = message.chat.id
+    if trinity_monitor.start_monitoring(chat_id):
+        bot.send_message(
+            chat_id, 
+            "✅ **Trinity Signal Monitor đã BẬT!**\n\n"
+            "📊 Sẽ theo dõi tín hiệu MUA MẠNH 💪 và MUA MARGIN 🚀 trên khung 30m\n"
+            "🎯 Theo dõi: Watchlist\n"
+            "⏰ Cooldown: 30 phút\n\n"
+            "Dùng /trinity_off để tắt.",
+            parse_mode='Markdown'
+        )
+    else:
+        bot.send_message(chat_id, "⚠️ Trinity Monitor đã đang chạy rồi!")
+
+@bot.message_handler(commands=['trinity_off'])
+def on_trinity_off(message):
+    """Stop Trinity Signal Monitor"""
+    chat_id = message.chat.id
+    if trinity_monitor.stop_monitoring():
+        bot.send_message(chat_id, "🛑 Trinity Signal Monitor đã TẮT.")
+    else:
+        bot.send_message(chat_id, "⚠️ Trinity Monitor chưa chạy!")
+
+@bot.message_handler(commands=['trinity_test'])
+def on_trinity_test(message):
+    """Test Trinity Alert UI"""
+    chat_id = message.chat.id
+    trinity_monitor.set_chat_id(chat_id) # Ensure chat_id is set
+    
+    parts = message.text.split()
+    symbol = parts[1].upper() if len(parts) > 1 else "TEST_STOCK"
+    
+    bot.reply_to(message, f"🧪 Đang gửi test alert cho {symbol}...")
+    if trinity_monitor.send_test_alert(symbol):
+        pass # Alert sent
+    else:
+        bot.reply_to(message, "❌ Lỗi gửi test alert.")
 
 @bot.message_handler(commands=['shark_stats', 'sharks'])
 def on_shark_stats(message):
@@ -138,14 +200,11 @@ def on_text(message):
         handle_vn_stock(bot, message)
     elif text == "📊 Tổng quan thị trường":
         handle_market_overview(bot, message, dnse_service)
-    elif text == "🔎 Tra cứu Cổ phiếu":
-        handle_stock_search_request(bot, message, dnse_service, shark_service)
+    elif text == "🔎 Tra cứu Cổ phiếu": # This text-based entry point is kept for direct text input
+        handle_stock_search_request(bot, message, dnse_service, shark_service, vnstock_service, trinity_monitor)
     elif text == "⭐ Watchlist":
         handle_show_watchlist(bot, message, watchlist_viewer)
-    elif text == "📊 Biến Động Mạnh":
-        # Show volatility report
-        report = shark_service.get_volatility_report()
-        bot.send_message(message.chat.id, report, parse_mode='Markdown')
+
     elif text == "🔙 Quay lại":
         handle_back_main(bot, message)
 

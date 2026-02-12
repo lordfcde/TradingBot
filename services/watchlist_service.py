@@ -43,6 +43,44 @@ class WatchlistService:
         self._save_data(data)
         # print(f"⭐ Added {symbol} to Watchlist.")
 
+    def add_enriched(self, symbol, shark_data=None, trinity_data=None):
+        """
+        Add symbol with enriched Shark + Trinity data.
+        
+        Args:
+            symbol: Stock symbol
+            shark_data: dict with price, change_pc, order_value, vol, side
+            trinity_data: dict from TrinityAnalyzer.check_signal() 
+        """
+        data = self._load_data()
+        symbol = symbol.upper()
+
+        entry = {
+            "entry_time": time.time(),
+            "display_time": datetime.now().strftime("%H:%M %d/%m"),
+        }
+
+        if shark_data:
+            entry["shark"] = {
+                "price": shark_data.get("price", 0),
+                "change_pc": shark_data.get("change_pc", 0),
+                "order_value": shark_data.get("order_value", 0),
+                "vol": shark_data.get("vol", 0),
+                "side": shark_data.get("side", "Unknown"),
+            }
+
+        if trinity_data:
+            entry["trinity"] = {
+                "rating": trinity_data.get("rating", "N/A"),
+                "trend": trinity_data.get("trend", "N/A"),
+                "cmf": trinity_data.get("cmf", 0),
+                "rsi": trinity_data.get("rsi", 0),
+                "error": trinity_data.get("error"),
+            }
+
+        data[symbol] = entry
+        self._save_data(data)
+
     def get_active_watchlist(self):
         """
         Returns list of valid symbols. Cleans up expired ones.

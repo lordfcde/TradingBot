@@ -53,7 +53,7 @@ from datetime import datetime
 
 # ... (imports)
 
-def format_stock_reply(data, shark_service=None):
+def format_stock_reply(data, shark_service=None, trinity_data=None):
     """
     Helper function to format stock data message.
     """
@@ -94,7 +94,12 @@ def format_stock_reply(data, shark_service=None):
     elif change_pc < 0: trend_icon = "📉"
     else: trend_icon = "🟡"
 
-    return (
+    # Get industry and avg volume if available
+    industry = data.get("industry", "N/A")
+    avg_vol_5d = data.get("avg_vol_5d", 0)
+    rsi = data.get("rsi", None)
+
+    base_msg = (
         f"-----------------------------\n"
         f"🔥 **{stock_id}** (Real-time)\n"
         f"🕒 `{log_time}`\n"
@@ -103,9 +108,26 @@ def format_stock_reply(data, shark_service=None):
         f"📦 KL Khớp: `{match_vol:,.0f}`\n"
         f"⚖️ Tham chiếu: `{ref_price:,.2f}`\n"
         f"📊 Tổng Vol: `{total_vol:,.0f}`\n"
+    )
+    
+    # Add industry if available
+    if industry and industry != "N/A":
+        base_msg += f"🏢 Ngành: `{industry}`\n"
+    
+    # Add 5-day avg volume if available
+    if avg_vol_5d > 0:
+        base_msg += f"📉 TB Vol 5D: `{avg_vol_5d:,.0f}`\n"
+        
+    # Add RSI if available
+    if rsi is not None:
+        rsi_icon = "🔴" if rsi > 70 else "🟢" if rsi < 30 else "🟡"
+        rsi_status = "Quá mua" if rsi > 70 else "Quá bán" if rsi < 30 else "Trung lập"
+        base_msg += f"📈 RSI(14): `{rsi:.1f}` {rsi_icon} ({rsi_status})\n"
+    
+    base_msg += (
         f"-----------------------------\n"
         f"📈 Cao nhất: `{high_price:,.2f}`\n"
-    f"📉 Thấp nhất: `{low_price:,.2f}`\n"
+        f"📉 Thấp nhất: `{low_price:,.2f}`\n"
         f"➗ Trung bình: `{avg_price:,.2f}`"
     )
 
@@ -124,54 +146,108 @@ def format_stock_reply(data, shark_service=None):
         except: pass
     
     base_msg += "\n-----------------------------"
+    
+    # Add Trinity Analysis if available
+    if trinity_data:
+        t_trend = trinity_data.get('trend', 'N/A')
+        t_cmf = trinity_data.get('cmf', 0)
+        t_chaikin = trinity_data.get('chaikin', 0)
+        t_rsi = trinity_data.get('rsi', 0)
+        t_signal = trinity_data.get('signal')
+        cmf_st = trinity_data.get('cmf_status', '')
+        t_trigger = trinity_data.get('trigger', '')
+
+        base_msg += f"\n⚡ **Trinity Fast 30m:**\n"
+        base_msg += f"• Xu hướng: {t_trend}\n"
+        base_msg += f"• Dòng tiền: {t_cmf:.2f} ({cmf_st})\n"
+        base_msg += f"• Chaikin: {t_chaikin:+,.0f}\n"
+        base_msg += f"• RSI: {t_rsi:.1f}\n"
+        if t_trigger:
+            trigger_label = "🔄 Rũ bỏ" if t_trigger == 'SHAKEOUT' else "💥 Vol đột biến"
+            base_msg += f"• Trigger: {trigger_label}\n"
+        if t_signal:
+            base_msg += f"⚡ **Tín hiệu: {t_signal}**\n"
+            
     return base_msg
 
-def handle_stock_price(bot, message, dnse_service, shark_service=None):
-    """Xử lý lệnh /stock"""
+def handle_stock_price(bot, message, dnse_service, shark_service=None, vnstock_service=None, trinity_service=None):
+    """Xử lý lệnh /stock (Updated to match Search logic)"""
     try:
         parts = message.text.split()
         if len(parts) < 2:
             bot.reply_to(message, "⚠️ Vui lòng nhập mã cổ phiếu. Ví dụ: `/stock HPG`", parse_mode='Markdown')
             return
             
-        symbol = parts[1].upper()
-        msg_wait = bot.reply_to(message, f"⏳ Đang kết nối lấy dữ liệu **{symbol}** qua MQTT...", parse_mode='Markdown')
+        symbol = parts[1].upper().strip()
         
-        # Event to wait for data
-        data_event = threading.Event()
-        received_data = {}
+        # Validation checks
+        if not symbol.isalnum() or len(symbol) > 6:
+            bot.reply_to(message, "⚠️ Mã cổ phiếu không hợp lệ.")
+            return
 
-        def on_stock_data(payload):
-            received_data.update(payload)
-            data_event.set()
-
-        # Call service
-        dnse_service.get_realtime_price(symbol, on_stock_data)
+        msg_wait = bot.reply_to(message, f"⏳ Đang tải dữ liệu **{symbol}** từ vnstock...", parse_mode='Markdown')
         
-        # Wait max 10 seconds
-        if data_event.wait(timeout=10.0):
-            reply_msg = format_stock_reply(received_data)
-            bot.delete_message(chat_id=message.chat.id, message_id=msg_wait.message_id)
-            bot.send_message(message.chat.id, reply_msg, parse_mode='Markdown')
+        # Use vnstock service if available
+        if vnstock_service:
+            data = vnstock_service.get_stock_info(symbol)
+            
+            if data:
+                # Check RSI Watchlist Trigger
+                if shark_service and data.get('rsi') is not None:
+                    added = shark_service.check_rsi_watchlist(
+                        symbol, 
+                        data.get('rsi'), 
+                        data.get('totalVolumeTraded', 0), 
+                        data.get('avg_vol_5d', 0)
+                    )
+                    
+                    if added:
+                        bot.send_message(message.chat.id, f"🔔 **{symbol}** đã được thêm vào Watchlist (RSI + Vol đột biến)!", parse_mode='Markdown')
+
+                # Check Trinity Signal Trigger (and Get Analysis)
+                trinity_analysis = None
+                if trinity_service:
+                    try:
+                        trinity_analysis = trinity_service.get_analysis(symbol)
+                        
+                        if trinity_analysis and trinity_analysis.get('signal'):
+                            sig_name = trinity_analysis['signal']
+                            
+                            # Add to Watchlist (if Shark Service available)
+                            if shark_service:
+                                shark_service.watchlist_service.add_to_watchlist(symbol)
+                                bot.send_message(message.chat.id, 
+                                    f"🚀 **TRINITY SIGNAL**: {symbol} - {sig_name}\n"
+                                    f"✅ Đã tự động thêm vào Watchlist!", 
+                                    parse_mode='Markdown'
+                                )
+                    except Exception as e:
+                        print(f"⚠️ Trinity check error: {e}")
+
+                reply_msg = format_stock_reply(data, shark_service, trinity_analysis)
+                bot.delete_message(chat_id=message.chat.id, message_id=msg_wait.message_id)
+                bot.send_message(message.chat.id, reply_msg, parse_mode='Markdown')
+            else:
+                bot.edit_message_text(f"❌ Không tìm thấy mã **{symbol}**.", chat_id=message.chat.id, message_id=msg_wait.message_id, parse_mode='Markdown')
         else:
-            bot.edit_message_text(f"❌ Không nhận được dữ liệu **{symbol}** (Timeout). CODE: {symbol}", chat_id=message.chat.id, message_id=msg_wait.message_id, parse_mode='Markdown')
+             bot.edit_message_text("❌ Vnstock Service chưa được khởi tạo.", chat_id=message.chat.id, message_id=msg_wait.message_id)
 
     except Exception as e:
         print(f"Stock Error: {e}")
         bot.reply_to(message, "❌ Lỗi hệ thống.")
 
-def handle_stock_search_request(bot, message, dnse_service, shark_service=None):
+def handle_stock_search_request(bot, message, dnse_service=None, shark_service=None, vnstock_service=None, trinity_service=None):
     """
     Bước 1: Hỏi người dùng nhập mã stock
     """
     prompt_msg = bot.reply_to(message, "🔠 **Nhập mã Cổ phiếu** bạn muốn xem (Ví dụ: HPG, SSI):", parse_mode='Markdown')
     
     # Register next step
-    bot.register_next_step_handler(prompt_msg, lambda m: process_stock_search_step(bot, m, dnse_service, shark_service))
+    bot.register_next_step_handler(prompt_msg, lambda m: process_stock_search_step(bot, m, dnse_service, shark_service, vnstock_service, trinity_service))
 
-def process_stock_search_step(bot, message, dnse_service, shark_service=None):
+def process_stock_search_step(bot, message, dnse_service=None, shark_service=None, vnstock_service=None, trinity_service=None):
     """
-    Bước 2: Nhận mã stock và gọi logic lấy giá
+    Bước 2: Nhận mã stock và gọi vnstock API
     """
     try:
         symbol = message.text.upper().strip()
@@ -181,27 +257,68 @@ def process_stock_search_step(bot, message, dnse_service, shark_service=None):
             bot.reply_to(message, "⚠️ Mã cổ phiếu không hợp lệ. Vui lòng thử lại.")
             return
 
-        msg_wait = bot.reply_to(message, f"⏳ Đang tải dữ liệu **{symbol}**...", parse_mode='Markdown')
+        msg_wait = bot.reply_to(message, f"⏳ Đang tải dữ liệu **{symbol}** từ vnstock...", parse_mode='Markdown')
         
-        data_event = threading.Event()
-        received_data = {}
-        
-        def on_stock_data(payload):
-            received_data.update(payload)
-            data_event.set()
+        # Use vnstock service if available, fallback to MQTT
+        if vnstock_service:
+            data = vnstock_service.get_stock_info(symbol)
             
-        dnse_service.get_realtime_price(symbol, on_stock_data)
-        
-        if data_event.wait(timeout=10.0):
-            reply_msg = format_stock_reply(received_data)
-            bot.delete_message(chat_id=message.chat.id, message_id=msg_wait.message_id)
-            bot.send_message(message.chat.id, reply_msg, parse_mode='Markdown')
-        else:
-             bot.edit_message_text(f"❌ Không tìm thấy mã **{symbol}** or Timeout.", chat_id=message.chat.id, message_id=msg_wait.message_id, parse_mode='Markdown')
+            if data:
+                # Check RSI Watchlist Trigger
+                if shark_service and data.get('rsi') is not None:
+                    added = shark_service.check_rsi_watchlist(
+                        symbol, 
+                        data.get('rsi'), 
+                        data.get('totalVolumeTraded', 0), 
+                        data.get('avg_vol_5d', 0)
+                    )
+                    
+                    if added:
+                        bot.send_message(message.chat.id, f"b🔔 **{symbol}** đã được thêm vào Watchlist (RSI + Vol đột biến)!", parse_mode='Markdown')
 
-    except Exception as e:
-        print(f"Search Step Error: {e}")
-        bot.reply_to(message, "❌ Lỗi xử lý.")
+                # Check Trinity Signal Trigger (and Get Analysis)
+                trinity_analysis = None
+                if trinity_service:
+                    try:
+                        # Get full analysis instead of just signal
+                        trinity_analysis = trinity_service.get_analysis(symbol)
+                        
+                        if trinity_analysis and trinity_analysis.get('signal'):
+                            sig_name = trinity_analysis['signal']
+                            
+                            # Add to Watchlist (if Shark Service available)
+                            if shark_service:
+                                shark_service.watchlist_service.add_to_watchlist(symbol)
+                                bot.send_message(message.chat.id, 
+                                    f"🚀 **TRINITY SIGNAL**: {symbol} - {sig_name}\n"
+                                    f"✅ Đã tự động thêm vào Watchlist!", 
+                                    parse_mode='Markdown'
+                                )
+                    except Exception as e:
+                        print(f"⚠️ Trinity check error: {e}")
+
+                reply_msg = format_stock_reply(data, shark_service, trinity_analysis)
+                bot.delete_message(chat_id=message.chat.id, message_id=msg_wait.message_id)
+                bot.send_message(message.chat.id, reply_msg, parse_mode='Markdown')
+            else:
+                bot.edit_message_text(f"❌ Không tìm thấy mã **{symbol}**.", chat_id=message.chat.id, message_id=msg_wait.message_id, parse_mode='Markdown')
+        else:
+            # Fallback to MQTT (old method)
+            data_event = threading.Event()
+            received_data = {}
+            
+            def on_stock_data(payload):
+                received_data.update(payload)
+                data_event.set()
+                
+            dnse_service.get_realtime_price(symbol, on_stock_data)
+            
+            if data_event.wait(timeout=10.0):
+                reply_msg = format_stock_reply(received_data)
+                bot.delete_message(chat_id=message.chat.id, message_id=msg_wait.message_id)
+                bot.send_message(message.chat.id, reply_msg, parse_mode='Markdown')
+            else:
+                bot.edit_message_text(f"❌ Không tìm thấy mã **{symbol}** or Timeout.", chat_id=message.chat.id, message_id=msg_wait.message_id, parse_mode='Markdown')
 
     except Exception as e:
         print(f"Search Step Error: {e}")
