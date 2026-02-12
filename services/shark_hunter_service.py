@@ -687,6 +687,11 @@ class SharkHunterService:
                     self.alert_history.clear()
                     if self.trinity_monitor:
                         self.trinity_monitor.alert_history.clear()
+                
+                # Filter watchlist by liquidity (remove illiquid stocks)
+                print("🔍 Filtering watchlist by liquidity before afternoon session...")
+                self.watchlist_service.filter_by_liquidity(min_avg_volume=250000)
+                
                 self.is_lunch_break = True
             
             # If exiting lunch break
@@ -735,6 +740,10 @@ class SharkHunterService:
         # Send Daily Watchlist Summary at 15:15 (after market close)
         if dt_now.hour == 15 and dt_now.minute >= 15:
             if not self.summary_sent_today and today_str != self.last_summary_date:
+                # Filter by liquidity before sending summary
+                print("🔍 Filtering watchlist by liquidity before daily summary...")
+                self.watchlist_service.filter_by_liquidity(min_avg_volume=250000)
+                
                 self._send_daily_summary()
                 self.summary_sent_today = True
                 self.last_summary_date = today_str

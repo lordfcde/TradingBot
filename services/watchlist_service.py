@@ -131,6 +131,65 @@ class WatchlistService:
         sorted_items.sort(key=lambda x: x['entry_time'], reverse=True)
         return sorted_items
 
+    def filter_by_liquidity(self, min_avg_volume=250000):
+        """
+        Filter watchlist by liquidity (5-day average volume).
+        Remove symbols with avg volume < min_avg_volume.
+        """
+        data = self._load_data()
+        if not data:
+            print("📊 Watchlist empty - no filtering needed")
+            return
+        
+        from vnstock import Vnstock
+        from datetime import datetime, timedelta
+        
+        symbols_to_remove = []
+        symbols_kept = []
+        
+        print(f"🔍 Filtering watchlist by liquidity (min 5d avg: {min_avg_volume:,})...")
+        
+        for symbol in list(data.keys()):
+            try:
+                stock = Vnstock().stock(symbol=symbol, source='KBS')
+                
+                # Get last 10 days of data to calculate 5-day avg
+                end_date = datetime.now()
+                start_date = end_date - timedelta(days=10)
+                
+                df = stock.quote.history(
+                    symbol=symbol,
+                    start=start_date.strftime('%Y-%m-%d'),
+                    end=end_date.strftime('%Y-%m-%d'),
+                    interval='1D'
+                )
+                
+                if df is not None and not df.empty and len(df) >= 5:
+                    # Calculate 5-day average volume
+                    avg_volume = df['volume'].tail(5).mean()
+                    
+                    if avg_volume < min_avg_volume:
+                        symbols_to_remove.append(symbol)
+                        print(f"  ❌ {symbol}: {avg_volume:,.0f} < {min_avg_volume:,} (removed)")
+                    else:
+                        symbols_kept.append(symbol)
+                        print(f"  ✅ {symbol}: {avg_volume:,.0f} >= {min_avg_volume:,} (kept)")
+                else:
+                    print(f"  ⚠️ {symbol}: Insufficient data - keeping")
+                    
+            except Exception as e:
+                print(f"  ⚠️ {symbol}: Error checking liquidity ({e}) - keeping")
+        
+        # Remove illiquid stocks
+        if symbols_to_remove:
+            for symbol in symbols_to_remove:
+                del data[symbol]
+            self._save_data(data)
+            print(f"🧹 Removed {len(symbols_to_remove)} illiquid stock(s)")
+            print(f"✅ Kept {len(symbols_kept)} liquid stock(s)")
+        else:
+            print(f"✅ All {len(symbols_kept)} stock(s) passed liquidity filter")
+
     def clear_watchlist(self):
         """Clears all entries from watchlist."""
         self._save_data({})
