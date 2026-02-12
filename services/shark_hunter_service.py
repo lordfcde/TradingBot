@@ -478,13 +478,20 @@ class SharkHunterService:
 
             # 2. Send SUPER SIGNAL alert (HTML)
             self.send_super_signal(symbol, price, change_pc, order_value, vol, side, analysis)
-
-            # 3. Save enriched data to watchlist
-            shark_data = {
-                'price': price, 'change_pc': change_pc,
-                'order_value': order_value, 'vol': vol, 'side': side,
-            }
-            self.watchlist_service.add_enriched(symbol, shark_data, analysis)
+            
+            # Add to Watchlist ONLY if BUY rating (not WATCH or neutral)
+            if analysis and analysis.get('rating') == 'BUY':
+                shark_data = {
+                    'price': price,
+                    'change_pc': change_pc,
+                    'order_value': order_value,
+                    'vol': vol,
+                    'side': side,
+                }
+                self.watchlist_service.add_enriched(symbol, shark_data, analysis)
+                print(f"✅ {symbol} added to Watchlist (Rating: BUY)")
+            elif analysis:
+                print(f"⚪ {symbol} skipped Watchlist (Rating: {analysis.get('rating', 'N/A')} - not BUY)")
 
         except Exception as e:
             print(f"❌ Hybrid Analysis Error for {symbol}: {e}")
