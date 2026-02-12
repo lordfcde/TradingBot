@@ -494,6 +494,7 @@ class SharkHunterService:
     def send_super_signal(self, symbol, price, change_pc, order_value, vol, side, analysis):
         """
         Send premium HTML SUPER SIGNAL alert combining Shark + Trinity data.
+        (Detailed format - already filtered by Trinity)
         """
         if not self.alert_chat_id:
             return
@@ -505,45 +506,70 @@ class SharkHunterService:
             # ── Shark section ───────────────────────────────
             val_billion = order_value / 1_000_000_000
             pct_icon = "📈" if change_pc >= 0 else "📉"
-            side_icon = "🟢 MUA" if side == "Buy" else "🔴 BÁN" if side == "Sell" else "⚪ ?"
+            side_text = "MUA" if side == "Buy" else "BÁN" if side == "Sell" else "?"
 
             # ── Trinity section ─────────────────────────────
             if error:
-                trinity_info = f"⚠️ {error}"
-                rating_icon = "⚠️"
+                trend_text = f"⚠️ Lỗi: {error}"
+                cmf_text = "N/A"
+                rsi_text = "N/A"
             else:
-                # Trend
+                # Trend with text explanation
                 trend_raw = analysis.get('trend', 'N/A')
                 if 'UPTREND' in trend_raw:
-                    trend_icon = "🟢↗"
+                    trend_text = "🟢 XU HƯỚNG TĂNG (Giá > EMA50)"
                 elif 'SIDEWAY' in trend_raw:
-                    trend_icon = "🟡→"
+                    trend_text = "🟡 XU HƯỚNG NGANG (Sideway)"
                 else:
-                    trend_icon = "🔴↘"
+                    trend_text = "🔴 XU HƯỚNG GIẢM (Giá < EMA50)"
 
-                # CMF
+                # CMF with text explanation
                 cmf_val = analysis.get('cmf', 0)
                 if cmf_val > 0.1:
-                    cmf_icon = "🟢💰"
+                    cmf_text = f"🟢 DÒNG TIỀN VÀO MẠNH ({cmf_val:.3f})"
                 elif cmf_val > 0:
-                    cmf_icon = "🟢💵"
+                    cmf_text = f"🟢 DÒNG TIỀN VÀO NHẸ ({cmf_val:.3f})"
                 else:
-                    cmf_icon = "🔴💸"
+                    cmf_text = f"🔴 DÒNG TIỀN RA ({cmf_val:.3f})"
 
-                rsi_val = f"{analysis.get('rsi', 0):.0f}"
-                trinity_info = f"{trend_icon} | {cmf_icon} CMF:{cmf_val:.2f} | RSI:{rsi_val}"
-                
-                # Rating
-                rating_icon = "💎" if rating == "BUY" else "👀"
+                rsi_val = analysis.get('rsi', 0)
+                if rsi_val > 70:
+                    rsi_text = f"🔴 QUÁ MUA: {rsi_val:.1f}"
+                elif rsi_val > 50:
+                    rsi_text = f"🟢 MẠNH: {rsi_val:.1f}"
+                elif rsi_val > 30:
+                    rsi_text = f"🟡 TRUNG LẬP: {rsi_val:.1f}"
+                else:
+                    rsi_text = f"🟢 QUÁ BÁN: {rsi_val:.1f}"
+
+            # ── Rating with text ────────────────────────────
+            if rating == "BUY":
+                rating_text = "💎 MUA MẠNH"
+            else:
+                rating_text = "👀 THEO DÕI"
 
             time_str = datetime.now().strftime("%H:%M:%S")
+            cooldown_min = self.cooldown // 60 if self.cooldown >= 60 else 1
 
-            # Compact 2-line format
+            # Detailed multi-line format for filtered signals
             msg = (
-                f"💎 <b>#{symbol}</b> {rating_icon}{rating} | {side_icon} | "
-                f"💰 <b>{val_billion:.1f}T</b> | 📦 {vol:,.0f}cp | "
-                f"💵 {price:,.0f} ({change_pc:+.2f}% {pct_icon}) | 🕐 {time_str}\n"
-                f"🧠 Trinity: {trinity_info}"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"💎 <b>SUPER SIGNAL: #{symbol}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🦈 <b>CÁ MẬP PHÁT HIỆN (Real-time)</b>\n"
+                f"• Loại lệnh: <b>{side_text}</b>\n"
+                f"• Giá trị lệnh: <b>{val_billion:,.1f} TỶ VNĐ</b>\n"
+                f"• Khối lượng: {vol:,.0f} cp\n"
+                f"• Giá khớp: {price:,.0f} ({change_pc:+.2f}% {pct_icon})\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🧠 <b>PHÂN TÍCH TRINITY (15M)</b>\n"
+                f"• {trend_text}\n"
+                f"• {cmf_text}\n"
+                f"• RSI(14): {rsi_text}\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🎯 <b>KẾT LUẬN: {rating_text}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"⏰ {time_str} | ⏳ Cooldown: {cooldown_min}p | ✅ Đã lưu Watchlist"
             )
 
             self.bot.send_message(self.alert_chat_id, msg, parse_mode='HTML')
