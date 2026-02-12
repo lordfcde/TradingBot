@@ -57,6 +57,10 @@ try:
     watchlist_viewer = WatchlistService() # For UI
     trinity_monitor = TrinitySignalMonitor(bot, vnstock_service, watchlist_viewer)  # Trinity Signal Monitor
 
+    # 🧹 CLEANUP: Remove watchlist entries older than 72h on startup
+    print("🧹 Cleaning up watchlist (removing entries >72h)...")
+    _ = shark_service.watchlist_service.get_active_watchlist()  # This auto-cleans and saves
+    print(f"✅ Watchlist cleaned. Active entries remain.")
 
     # Auto-Start Scanner if configured
     if shark_service.alert_chat_id:
