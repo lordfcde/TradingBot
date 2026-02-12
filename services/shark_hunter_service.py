@@ -46,6 +46,10 @@ class SharkHunterService:
         self.price_tracker = {}  # Track price changes for all stocks
         self.avg_volume_cache = {}  # Cache avg volume to reduce API calls
         
+        # Lunch break tracking (to clear cache and avoid spam)
+        self.is_lunch_break = False
+        self.last_lunch_check = time.time()
+        
         self.last_maintenance = time.time()
         self.last_reset_date = datetime.now().strftime("%Y-%m-%d")
         self._load_stats()
@@ -125,6 +129,9 @@ class SharkHunterService:
     # ==========================================
     def process_tick(self, payload):
         try:
+            # Check and clear cache during lunch break
+            self._check_lunch_break()
+            
             self._do_maintenance()
             symbol = payload.get("symbol")
             if not symbol: return
@@ -611,6 +618,36 @@ class SharkHunterService:
 
 
     # Helper Methods
+    def _check_lunch_break(self):
+        """Check if market is in lunch break and clear cache if needed"""
+        # Only check every 60 seconds to avoid overhead
+        if time.time() - self.last_lunch_check < 60:
+            return
+        
+        self.last_lunch_check = time.time()
+        
+        try:
+            from utils.market_hours import MarketHours
+            
+            is_lunch = MarketHours.is_lunch_break()
+            
+            # If entering lunch break, clear caches
+            if is_lunch and not self.is_lunch_break:
+                print("🍱 Entering lunch break - Clearing alert cache to avoid spam")
+                with self.lock:
+                    self.alert_history.clear()
+                    if self.trinity_monitor:
+                        self.trinity_monitor.alert_history.clear()
+                self.is_lunch_break = True
+            
+            # If exiting lunch break
+            elif not is_lunch and self.is_lunch_break:
+                print("✅ Exiting lunch break - Resuming monitoring")
+                self.is_lunch_break = False
+                
+        except Exception as e:
+            print(f"⚠️ Lunch break check error: {e}")
+    
     def _do_maintenance(self):
         try:
             now = time.time()
