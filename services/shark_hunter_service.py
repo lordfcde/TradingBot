@@ -50,6 +50,10 @@ class SharkHunterService:
         self.is_lunch_break = False
         self.last_lunch_check = time.time()
         
+        # Daily summary tracking
+        self.last_summary_date = None
+        self.summary_sent_today = False
+        
         self.last_maintenance = time.time()
         self.last_reset_date = datetime.now().strftime("%Y-%m-%d")
         self._load_stats()
@@ -452,6 +456,45 @@ class SharkHunterService:
         except Exception as e:
             print(f"❌ SEND ERROR: {e}")
 
+    def _send_daily_summary(self):
+        """Send daily watchlist summary at end of trading day (15:15)"""
+        if not self.alert_chat_id:
+            return
+        
+        try:
+            # Get today's watchlist entries
+            watchlist = self.watchlist_service.get_active_watchlist()
+            
+            # Filter for entries added today
+            from datetime import datetime
+            today = datetime.now().strftime("%Y-%m-%d")
+            today_symbols = []
+            
+            for entry in watchlist:
+                entry_time = entry.get('entry_time', 0)
+                entry_date = datetime.fromtimestamp(entry_time).strftime("%Y-%m-%d")
+                if entry_date == today:
+                    today_symbols.append(entry['symbol'])
+            
+            if today_symbols:
+                # Format as horizontal list
+                symbols_text = " | ".join([f"#{sym}" for sym in today_symbols])
+                msg = (
+                    f"📊 <b>WATCHLIST HÔM NAY ({len(today_symbols)} mã)</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"{symbols_text}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"💎 Tất cả đều có rating <b>BUY</b> (Mua mạnh)\n"
+                    f"⏰ Tóm tắt cuối phiên {datetime.now().strftime('%d/%m/%Y')}"
+                )
+                self.bot.send_message(self.alert_chat_id, msg, parse_mode='HTML')
+                print(f"📊 Daily summary sent: {len(today_symbols)} symbols")
+            else:
+                print(f"📊 No watchlist entries today - skipping summary")
+                
+        except Exception as e:
+            print(f"❌ Daily summary error: {e}")
+
     def _send_volatility_alert(self, symbol, change_pc, price, total_vol, direction, icon):
         """Send alert for high volatility stock movements."""
         # DISABLED AS PER USER REQUEST (Too much noise / low liquidity)
@@ -684,6 +727,14 @@ class SharkHunterService:
             self.shark_stats.clear()
             self.alert_history.clear()
             self.last_reset_date = today_str
+            self.summary_sent_today = False  # Reset summary flag
+        
+        # Send Daily Watchlist Summary at 15:15 (after market close)
+        if dt_now.hour == 15 and dt_now.minute >= 15:
+            if not self.summary_sent_today and today_str != self.last_summary_date:
+                self._send_daily_summary()
+                self.summary_sent_today = True
+                self.last_summary_date = today_str
             self._save_stats()
             
         # Save Stats
