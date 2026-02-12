@@ -1,9 +1,10 @@
 pyTelegramBotAPI
 yfinance
-pandas_ta
+git+https://github.com/twopirllc/pandas-ta.git@development
 watchdog
 flask
 vnstock
 paho-mqtt
 python-dotenv
 requests
+numpy<2.0.0
