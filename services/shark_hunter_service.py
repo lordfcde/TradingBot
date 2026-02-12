@@ -167,7 +167,8 @@ class SharkHunterService:
                 payload.get("vol", 0) or 0
             )
             # User Correction: Unit is 10 shares (Step 1629)
-            vol = raw_vol * 10
+            # Unit Correction: DNSE sends 'round lots' (1 lot = 100 shares for HOSE/HNX/UPCOM)
+            vol = raw_vol * 100
             
             price = float(payload.get("matchPrice", 0) or payload.get("lastPrice", 0))
             total_vol = int(payload.get("totalVolumeTraded", 0) or payload.get("totalVol", 0))
