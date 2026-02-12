@@ -3,3 +3,7 @@ yfinance
 pandas_ta
 watchdog
 flask
+vnstock
+paho-mqtt
+python-dotenv
+requests
