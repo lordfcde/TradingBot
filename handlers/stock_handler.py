@@ -154,6 +154,7 @@ def format_stock_reply(data, shark_service=None, trinity_data=None):
         t_chaikin = trinity_data.get('chaikin', 0)
         t_rsi = trinity_data.get('rsi', 0)
         t_signal = trinity_data.get('signal')
+        t_rating = trinity_data.get('rating', 'UNKNOWN')  # From analyzer
         cmf_st = trinity_data.get('cmf_status', '')
         t_trigger = trinity_data.get('trigger', '')
 
@@ -167,6 +168,81 @@ def format_stock_reply(data, shark_service=None, trinity_data=None):
             base_msg += f"• Trigger: {trigger_label}\n"
         if t_signal:
             base_msg += f"⚡ **Tín hiệu: {t_signal}**\n"
+        
+        # === MULTI-LAYER SCORING SYSTEM ===
+        base_msg += "\n-----------------------------\n"
+        base_msg += "📊 **PHÂN TÍCH ĐA TẦNG**\n"
+        
+        score = 0
+        reasons = []
+        
+        # Layer 1: Real-time signals
+        if change_pc > 2:
+            score += 2
+            reasons.append("✅ Tăng giá mạnh")
+        elif change_pc > 0:
+            score += 1
+            reasons.append("✅ Tăng giá nhẹ")
+        elif change_pc < -2:
+            score -= 1
+            reasons.append("⚠️ Giảm giá mạnh")
+        
+        # Volume ratio
+        vol_ratio = (total_vol / avg_vol_5d * 100) if avg_vol_5d > 0 else 0
+        if vol_ratio > 150:
+            score += 2
+            reasons.append("✅ Vol đột biến")
+        elif vol_ratio > 100:
+            score += 1
+            reasons.append("✅ Vol tăng")
+        elif vol_ratio < 50 and vol_ratio > 0:
+            score -= 1
+            reasons.append("⚠️ Vol thấp")
+        
+        # Layer 2: Trinity signals
+        if t_rating == "BUY":
+            score += 3
+            reasons.append("✅ Trinity: BUY")
+        elif t_rating == "WATCH":
+            score += 1
+            reasons.append("⚪ Trinity: WATCH")
+        
+        if t_rsi > 70:
+            score -= 1
+            reasons.append("⚠️ RSI quá mua")
+        elif t_rsi > 50:
+            score += 1
+            reasons.append("✅ RSI mạnh")
+        
+        if t_cmf > 0.1:
+            score += 2
+            reasons.append("✅ Tiền vào mạnh")
+        elif t_cmf > 0:
+            score += 1
+            reasons.append("✅ Tiền vào nhẹ")
+        elif t_cmf < -0.1:
+            score -= 1
+            reasons.append("⚠️ Tiền ra mạnh")
+        
+        # Display reasons
+        base_msg += "📋 Yếu tố:\n"
+        for r in reasons[:5]:  # Limit to 5 key reasons
+            base_msg += f"  {r}\n"
+        
+        # Final score and recommendation
+        base_msg += f"\n🔢 Điểm: **{score}/10**\n"
+        
+        if score >= 6:
+            recommendation = "🟢 THÊM WATCHLIST"
+            rec_icon = "🟢"
+        elif score >= 3:
+            recommendation = "🟡 THEO DÕI"
+            rec_icon = "🟡"
+        else:
+            recommendation = "🔴 BỎ QUA"
+            rec_icon = "🔴"
+        
+        base_msg += f"💡 Gợi ý: **{rec_icon} {recommendation}**"
             
     return base_msg
 
@@ -223,6 +299,22 @@ def handle_stock_price(bot, message, dnse_service, shark_service=None, vnstock_s
                                 )
                     except Exception as e:
                         print(f"⚠️ Trinity check error: {e}")
+                
+                # Add TrinityAnalyzer rating for multi-layer scoring
+                try:
+                    from services.analyzer import TrinityAnalyzer
+                    analyzer = TrinityAnalyzer()
+                    analyzer_result = analyzer.check_signal(symbol)
+                    
+                    if trinity_analysis is None:
+                        trinity_analysis = analyzer_result
+                    else:
+                        # Merge analyzer rating into trinity_monitor data
+                        trinity_analysis['rating'] = analyzer_result.get('rating', 'WATCH')
+                except Exception as e:
+                    print(f"⚠️ Analyzer error: {e}")
+                    if trinity_analysis:
+                        trinity_analysis['rating'] = 'UNKNOWN'
 
                 reply_msg = format_stock_reply(data, shark_service, trinity_analysis)
                 bot.delete_message(chat_id=message.chat.id, message_id=msg_wait.message_id)
