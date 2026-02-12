@@ -492,11 +492,11 @@ def show_watchlist_view(bot, call, watchlist_service):
         bot.answer_callback_query(call.id, "❌ Lỗi hiển thị watchlist")
 
 def show_top_symbols(bot, call):
-    """Show top symbols across multiple days from watchlist_history.txt"""
+    """Show top symbols by number of unique days they were added to watchlist"""
     try:
         history_file = "watchlist_history.txt"
         import os
-        from collections import Counter
+        from collections import defaultdict
         
         if not os.path.exists(history_file):
             bot.answer_callback_query(call.id, "❌ Chưa có lịch sử")
@@ -509,32 +509,44 @@ def show_top_symbols(bot, call):
             bot.answer_callback_query(call.id, "❌ Chưa có dữ liệu")
             return
         
-        # Parse all symbols from history
-        symbol_counts = Counter()
+        # Track which dates each symbol appeared on
+        symbol_dates = defaultdict(set)  # symbol -> set of dates
+        
         for line in lines:
             if '|' in line:
                 parts = line.split('|')
                 if len(parts) >= 3:
+                    # Extract date (format: "2026-02-12 15:15")
+                    date_str = parts[0].strip().split()[0]  # Get "2026-02-12"
+                    
                     # Extract symbols (format: #SYMBOL)
                     symbols_part = '|'.join(parts[2:])
                     symbols = [s.strip().replace('#', '') for s in symbols_part.split('|') if s.strip().startswith('#')]
-                    symbol_counts.update(symbols)
+                    
+                    # Add this date to each symbol's set
+                    for symbol in symbols:
+                        symbol_dates[symbol].add(date_str)
+        
+        # Count unique days per symbol
+        symbol_day_counts = [(symbol, len(dates)) for symbol, dates in symbol_dates.items()]
+        symbol_day_counts.sort(key=lambda x: x[1], reverse=True)
         
         # Get top 10
-        top_symbols = symbol_counts.most_common(10)
+        top_symbols = symbol_day_counts[:10]
         
         if not top_symbols:
             bot.answer_callback_query(call.id, "❌ Không có dữ liệu")
             return
         
         # Format message
-        lines_msg = ["📊 **TOP MÃ ĐƯỢC THÊM NHIỀU NHẤT**", "━━━━━━━━━━━━━━━━━━━━━━━━"]
-        for idx, (symbol, count) in enumerate(top_symbols, 1):
+        lines_msg = ["📊 **TOP MÃ XUẤT HIỆN LIÊN TỤC**", "━━━━━━━━━━━━━━━━━━━━━━━━"]
+        for idx, (symbol, day_count) in enumerate(top_symbols, 1):
             medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else f"{idx}."
-            lines_msg.append(f"{medal} **#{symbol}** — {count} lần")
+            day_text = "ngày" if day_count > 1 else "ngày"
+            lines_msg.append(f"{medal} **#{symbol}** — {day_count} {day_text}")
         
         lines_msg.append("━━━━━━━━━━━━━━━━━━━━━━━━")
-        lines_msg.append(f"💡 Thống kê từ {len(lines)} ngày")
+        lines_msg.append(f"💡 Dựa trên {len(lines)} phiên giao dịch")
         
         msg = "\n".join(lines_msg)
         bot.edit_message_text(msg, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode='Markdown')
