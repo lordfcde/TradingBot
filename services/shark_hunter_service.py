@@ -519,10 +519,13 @@ class SharkHunterService:
                 analysis = self.analyzer.check_signal(symbol)
                 self.trinity_cache[symbol] = {'time': now, 'data': analysis}
 
-            # 2. Send SUPER SIGNAL alert (HTML)
-            self.send_super_signal(symbol, price, change_pc, order_value, vol, side, analysis)
+            # 2. Send SUPER SIGNAL alert ONLY if BUY rating (not WATCH)
+            if analysis and analysis.get('rating') == 'BUY':
+                self.send_super_signal(symbol, price, change_pc, order_value, vol, side, analysis)
+            elif analysis:
+                print(f"⚪ {symbol} SUPER SIGNAL skipped (Rating: {analysis.get('rating', 'N/A')} - not BUY)")
             
-            # Add to Watchlist ONLY if BUY rating (not WATCH or neutral)
+            # 3. Add to Watchlist ONLY if BUY rating (not WATCH or neutral)
             if analysis and analysis.get('rating') == 'BUY':
                 shark_data = {
                     'price': price,
