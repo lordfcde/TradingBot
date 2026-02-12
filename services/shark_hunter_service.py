@@ -479,13 +479,27 @@ class SharkHunterService:
             if today_symbols:
                 # Format as horizontal list
                 symbols_text = " | ".join([f"#{sym}" for sym in today_symbols])
+                
+                # Save to history file
+                history_file = "watchlist_history.txt"
+                log_line = f"{datetime.now().strftime('%Y-%m-%d %H:%M')} | {len(today_symbols)} mã | {symbols_text}\n"
+                
+                try:
+                    with open(history_file, 'a', encoding='utf-8') as f:
+                        f.write(log_line)
+                    print(f"💾 Saved to {history_file}")
+                except Exception as e:
+                    print(f"⚠️ Could not save to history file: {e}")
+                
+                # Send Telegram message
                 msg = (
                     f"📊 <b>WATCHLIST HÔM NAY ({len(today_symbols)} mã)</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
                     f"{symbols_text}\n"
                     f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
                     f"💎 Tất cả đều có rating <b>BUY</b> (Mua mạnh)\n"
-                    f"⏰ Tóm tắt cuối phiên {datetime.now().strftime('%d/%m/%Y')}"
+                    f"⏰ Tóm tắt cuối phiên {datetime.now().strftime('%d/%m/%Y')}\n"
+                    f"💾 Đã lưu vào file lịch sử"
                 )
                 self.bot.send_message(self.alert_chat_id, msg, parse_mode='HTML')
                 print(f"📊 Daily summary sent: {len(today_symbols)} symbols")
