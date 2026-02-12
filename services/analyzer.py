@@ -95,7 +95,7 @@ class TrinityAnalyzer:
         """Fetch 15m OHLCV via vnstock."""
         try:
             from vnstock import Vnstock
-            stock = Vnstock().stock(symbol=symbol, source='VCI')
+            stock = Vnstock().stock(symbol=symbol, source='KBS')  # KBS has better 15m data quality
 
             end_date = datetime.now()
             start_date = end_date - timedelta(days=self.lookback_days)

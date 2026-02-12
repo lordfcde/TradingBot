@@ -283,7 +283,7 @@ class TrinitySignalMonitor:
             start_date = end_date - timedelta(days=30)
 
             from vnstock import Vnstock
-            stock = Vnstock().stock(symbol=symbol, source='VCI')
+            stock = Vnstock().stock(symbol=symbol, source='KBS')  # KBS has better intraday data quality
 
             df = stock.quote.history(
                 symbol=symbol,
