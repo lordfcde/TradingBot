@@ -1,6 +1,6 @@
 pyTelegramBotAPI
 yfinance
-https://github.com/twopirllc/pandas-ta/archive/refs/heads/development.zip
+pandas-ta
 watchdog
 flask
 vnstock
