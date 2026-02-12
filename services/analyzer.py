@@ -2,7 +2,7 @@
 TrinityAnalyzer — Hybrid Shark + Technical Analysis Module.
 
 When Shark Hunter detects a large order (>1B VND), this analyzer
-runs TrinityLite on 15-minute data to produce a BUY / WATCH rating.
+runs TrinityLite on 1H (Hourly) data to produce a BUY / WATCH rating.
 
 Designed for low-latency, fault-tolerant operation:
   • Uses pandas_ta (vectorized, no for-loops)
@@ -16,19 +16,19 @@ from services.trinity_indicators import TrinityLite
 class TrinityAnalyzer:
     """
     Lightweight technical analyzer triggered by Shark orders.
-    Fetches 15m candles via vnstock, runs TrinityLite, returns a rating.
+    Fetches 1H candles via vnstock, runs TrinityLite, returns a rating.
     """
 
     def __init__(self):
         self.engine = TrinityLite()
-        self.timeframe = "15m"
-        self.lookback_days = 15  # ~100 × 15m candles in trading hours
-        print("✅ TrinityAnalyzer initialized (15m hybrid mode)")
+        self.timeframe = "1H"       # Hourly timeframe for T+2.5 strategy
+        self.lookback_days = 30     # Need ~50 bars. 5 bars/day * 30 days = 150 bars. Safe.
+        print("✅ TrinityAnalyzer initialized (1H hybrid mode)")
 
     # ── Public API ──────────────────────────────────────────
     def check_signal(self, symbol: str) -> dict:
         """
-        Fetch 15m data and run TrinityLite analysis.
+        Fetch 1H data and run TrinityLite analysis.
 
         Returns
         -------
