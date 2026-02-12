@@ -209,6 +209,25 @@ def on_text(message):
     elif text == "⭐ Watchlist":
         handle_show_watchlist(bot, message, watchlist_viewer)
 
+# --- Callback Query Handlers ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith('watchlist_'))
+def watchlist_callback(call):
+    from handlers.stock_handler import show_watchlist_view, show_top_symbols, show_today_buy_signals
+    
+    try:
+        if call.data == 'watchlist_view':
+            show_watchlist_view(bot, call, watchlist_viewer)
+        elif call.data == 'watchlist_top':
+            show_top_symbols(bot, call)
+        elif call.data == 'watchlist_today':
+            show_today_buy_signals(bot, call, watchlist_viewer)
+        
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        print(f"Callback error: {e}")
+        bot.answer_callback_query(call.id, "❌ Lỗi xử lý")
+
+
     elif text == "🔙 Quay lại":
         handle_back_main(bot, message)
 

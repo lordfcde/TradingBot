@@ -418,6 +418,27 @@ def process_stock_search_step(bot, message, dnse_service=None, shark_service=Non
 
 def handle_show_watchlist(bot, message, watchlist_service):
     try:
+        from telebot import types
+        
+        # Show inline keyboard menu for statistics options
+        markup = types.InlineKeyboardMarkup()
+        markup.row(
+            types.InlineKeyboardButton("📋 Xem Watchlist", callback_data="watchlist_view"),
+            types.InlineKeyboardButton("📊 Top Mã", callback_data="watchlist_top")
+        )
+        markup.row(
+            types.InlineKeyboardButton("🔥 BUY Signal Hôm Nay", callback_data="watchlist_today")
+        )
+        
+        bot.reply_to(message, "⭐ **WATCHLIST MENU**\nChọn chức năng:", reply_markup=markup, parse_mode='Markdown')
+        
+    except Exception as e:
+        print(f"Watchlist Error: {e}")
+        bot.reply_to(message, "❌ Lỗi hiển thị menu Watchlist.")
+
+def show_watchlist_view(bot, call, watchlist_service):
+    """Show current watchlist + 3-day history"""
+    try:
         items = watchlist_service.get_active_watchlist()
         
         # Build message with current watchlist
@@ -436,8 +457,8 @@ def handle_show_watchlist(bot, message, watchlist_service):
         else:
             lines.append("📭 Watchlist hiện tại đang trống")
         
-        # Add history section
-        lines.append("\n📊 **LỊCH SỬ 7 NGÀY GẦN NHẤT:**")
+        # Add history section (3 days instead of 7)
+        lines.append("\n📊 **LỊCH SỬ 3 NGÀY GẦN NHẤT:**")
         lines.append("-----------------------------------")
         
         history_file = "watchlist_history.txt"
@@ -448,8 +469,8 @@ def handle_show_watchlist(bot, message, watchlist_service):
                     all_lines = f.readlines()
                 
                 if all_lines:
-                    # Show last 7 days
-                    recent = all_lines[-7:]
+                    # Show last 3 days
+                    recent = all_lines[-3:]
                     for line in recent:
                         lines.append(line.strip())
                 else:
@@ -464,11 +485,118 @@ def handle_show_watchlist(bot, message, watchlist_service):
         lines.append("💡 Watchlist tự động xóa sau 72h")
         
         msg = "\n".join(lines)
-        bot.reply_to(message, msg, parse_mode='Markdown')
+        bot.edit_message_text(msg, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode='Markdown')
         
     except Exception as e:
-        print(f"Watchlist Error: {e}")
-        bot.reply_to(message, "❌ Lỗi đọc Watchlist.")
+        print(f"Watchlist view error: {e}")
+        bot.answer_callback_query(call.id, "❌ Lỗi hiển thị watchlist")
+
+def show_top_symbols(bot, call):
+    """Show top symbols across multiple days from watchlist_history.txt"""
+    try:
+        history_file = "watchlist_history.txt"
+        import os
+        from collections import Counter
+        
+        if not os.path.exists(history_file):
+            bot.answer_callback_query(call.id, "❌ Chưa có lịch sử")
+            return
+        
+        with open(history_file, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        
+        if not lines:
+            bot.answer_callback_query(call.id, "❌ Chưa có dữ liệu")
+            return
+        
+        # Parse all symbols from history
+        symbol_counts = Counter()
+        for line in lines:
+            if '|' in line:
+                parts = line.split('|')
+                if len(parts) >= 3:
+                    # Extract symbols (format: #SYMBOL)
+                    symbols_part = '|'.join(parts[2:])
+                    symbols = [s.strip().replace('#', '') for s in symbols_part.split('|') if s.strip().startswith('#')]
+                    symbol_counts.update(symbols)
+        
+        # Get top 10
+        top_symbols = symbol_counts.most_common(10)
+        
+        if not top_symbols:
+            bot.answer_callback_query(call.id, "❌ Không có dữ liệu")
+            return
+        
+        # Format message
+        lines_msg = ["📊 **TOP MÃ ĐƯỢC THÊM NHIỀU NHẤT**", "━━━━━━━━━━━━━━━━━━━━━━━━"]
+        for idx, (symbol, count) in enumerate(top_symbols, 1):
+            medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else f"{idx}."
+            lines_msg.append(f"{medal} **#{symbol}** — {count} lần")
+        
+        lines_msg.append("━━━━━━━━━━━━━━━━━━━━━━━━")
+        lines_msg.append(f"💡 Thống kê từ {len(lines)} ngày")
+        
+        msg = "\n".join(lines_msg)
+        bot.edit_message_text(msg, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode='Markdown')
+        
+    except Exception as e:
+        print(f"Top symbols error: {e}")
+        bot.answer_callback_query(call.id, "❌ Lỗi thống kê")
+
+def show_today_buy_signals(bot, call, watchlist_service):
+    """Show symbols with most BUY signals today"""
+    try:
+        from datetime import datetime
+        from collections import Counter
+        
+        data = watchlist_service._load_data()
+        
+        if not data:
+            bot.answer_callback_query(call.id, "❌ Watchlist trống")
+            return
+        
+        # Filter for today only
+        today = datetime.now().strftime("%Y-%m-%d")
+        today_symbols = []
+        
+        for symbol, info in data.items():
+            entry_time = info.get('entry_time', 0)
+            entry_date = datetime.fromtimestamp(entry_time).strftime("%Y-%m-%d")
+            
+            if entry_date == today and info.get('trinity', {}).get('rating') == 'BUY':
+                today_symbols.append(symbol)
+        
+        if not today_symbols:
+            bot.edit_message_text(
+                "🔥 **BUY SIGNAL HÔM NAY**\n━━━━━━━━━━━━━━━━━━━━━━━━\n📭 Chưa có BUY signal nào hôm nay",
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                parse_mode='Markdown'
+            )
+            return
+        
+        # Count occurrences (in case symbol added multiple times)
+        symbol_counts = Counter(today_symbols)
+        top_symbols = symbol_counts.most_common(10)
+        
+        # Format message
+        lines_msg = ["🔥 **BUY SIGNAL HÔM NAY**", "━━━━━━━━━━━━━━━━━━━━━━━━"]
+        for idx, (symbol, count) in enumerate(top_symbols, 1):
+            if count > 1:
+                lines_msg.append(f"{idx}. **#{symbol}** — {count} lần")
+            else:
+                lines_msg.append(f"{idx}. **#{symbol}**")
+        
+        lines_msg.append("━━━━━━━━━━━━━━━━━━━━━━━━")
+        lines_msg.append(f"💎 Tổng {len(today_symbols)} BUY signal hôm nay")
+        
+        msg = "\n".join(lines_msg)
+        bot.edit_message_text(msg, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode='Markdown')
+        
+    except Exception as e:
+        print(f"Today signals error: {e}")
+        bot.answer_callback_query(call.id, "❌ Lỗi thống kê")
+
 
 def handle_market_overview(bot, message, dnse_service):
     """
