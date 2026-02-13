@@ -53,6 +53,53 @@ from datetime import datetime
 
 # ... (imports)
 
+def get_enriched_trinity_analysis(symbol, trinity_service, vnstock_service, shark_service=None, bot=None, chat_id=None):
+    """
+    Common logic to get Trinity Monitor (1H) + Trinity Analyzer (Deep) data.
+    Also handles auto-adding to Watchlist if signal found.
+    """
+    trinity_analysis = None
+    
+    # 1. Trinity Monitor (Fast Signal)
+    if trinity_service:
+        try:
+            trinity_analysis = trinity_service.get_analysis(symbol, timeframe="1H")
+            
+            if trinity_analysis and trinity_analysis.get('signal'):
+                sig_name = trinity_analysis['signal']
+                
+                # Auto-add to Watchlist
+                if shark_service and bot and chat_id:
+                    shark_service.watchlist_service.add_to_watchlist(symbol)
+                    bot.send_message(
+                        chat_id, 
+                        f"🚀 **TRINITY SIGNAL**: {symbol} - {sig_name}\n"
+                        f"✅ Đã tự động thêm vào Watchlist!", 
+                        parse_mode='Markdown'
+                    )
+        except Exception as e:
+            print(f"⚠️ Trinity check error: {e}")
+
+    # 2. Trinity Analyzer (Deep Analysis)
+    try:
+        from services.analyzer import TrinityAnalyzer
+        # Initialize with shared service
+        analyzer = TrinityAnalyzer(vnstock_service)
+        analyzer_result = analyzer.check_signal(symbol)
+        
+        if trinity_analysis is None:
+            trinity_analysis = analyzer_result
+        else:
+            # Merge logic
+            trinity_analysis['rating'] = analyzer_result.get('rating', 'WATCH')
+            
+    except Exception as e:
+        print(f"⚠️ Analyzer error: {e}")
+        if trinity_analysis:
+            trinity_analysis['rating'] = 'UNKNOWN'
+            
+    return trinity_analysis
+
 def format_stock_reply(data, shark_service=None, trinity_data=None):
     """
     Helper function to format stock data message.
@@ -284,41 +331,11 @@ def handle_stock_price(bot, message, dnse_service, shark_service=None, vnstock_s
                     if added:
                         bot.send_message(message.chat.id, f"🔔 **{symbol}** đã được thêm vào Watchlist (RSI + Vol đột biến)!", parse_mode='Markdown')
 
-                # Check Trinity Signal Trigger (and Get Analysis)
-                trinity_analysis = None
-                if trinity_service:
-                    try:
-                        trinity_analysis = trinity_service.get_analysis(symbol, timeframe="1H")
-                        
-                        if trinity_analysis and trinity_analysis.get('signal'):
-                            sig_name = trinity_analysis['signal']
-                            
-                            # Add to Watchlist (if Shark Service available)
-                            if shark_service:
-                                shark_service.watchlist_service.add_to_watchlist(symbol)
-                                bot.send_message(message.chat.id, 
-                                    f"🚀 **TRINITY SIGNAL**: {symbol} - {sig_name}\n"
-                                    f"✅ Đã tự động thêm vào Watchlist!", 
-                                    parse_mode='Markdown'
-                                )
-                    except Exception as e:
-                        print(f"⚠️ Trinity check error: {e}")
-                
-                # Add TrinityAnalyzer rating for multi-layer scoring
-                try:
-                    from services.analyzer import TrinityAnalyzer
-                    analyzer = TrinityAnalyzer()
-                    analyzer_result = analyzer.check_signal(symbol)
-                    
-                    if trinity_analysis is None:
-                        trinity_analysis = analyzer_result
-                    else:
-                        # Merge analyzer rating into trinity_monitor data
-                        trinity_analysis['rating'] = analyzer_result.get('rating', 'WATCH')
-                except Exception as e:
-                    print(f"⚠️ Analyzer error: {e}")
-                    if trinity_analysis:
-                        trinity_analysis['rating'] = 'UNKNOWN'
+                # Unified Analysis Logic
+                trinity_analysis = get_enriched_trinity_analysis(
+                    symbol, trinity_service, vnstock_service, 
+                    shark_service, bot, message.chat.id
+                )
 
                 reply_msg = format_stock_reply(data, shark_service, trinity_analysis)
                 bot.delete_message(chat_id=message.chat.id, message_id=msg_wait.message_id)
@@ -372,26 +389,11 @@ def process_stock_search_step(bot, message, dnse_service=None, shark_service=Non
                     if added:
                         bot.send_message(message.chat.id, f"b🔔 **{symbol}** đã được thêm vào Watchlist (RSI + Vol đột biến)!", parse_mode='Markdown')
 
-                # Check Trinity Signal Trigger (and Get Analysis)
-                trinity_analysis = None
-                if trinity_service:
-                    try:
-                        # Get full analysis instead of just signal
-                        trinity_analysis = trinity_service.get_analysis(symbol, timeframe="1H")
-                        
-                        if trinity_analysis and trinity_analysis.get('signal'):
-                            sig_name = trinity_analysis['signal']
-                            
-                            # Add to Watchlist (if Shark Service available)
-                            if shark_service:
-                                shark_service.watchlist_service.add_to_watchlist(symbol)
-                                bot.send_message(message.chat.id, 
-                                    f"🚀 **TRINITY SIGNAL**: {symbol} - {sig_name}\n"
-                                    f"✅ Đã tự động thêm vào Watchlist!", 
-                                    parse_mode='Markdown'
-                                )
-                    except Exception as e:
-                        print(f"⚠️ Trinity check error: {e}")
+                # Unified Analysis Logic
+                trinity_analysis = get_enriched_trinity_analysis(
+                    symbol, trinity_service, vnstock_service, 
+                    shark_service, bot, message.chat.id
+                )
 
                 reply_msg = format_stock_reply(data, shark_service, trinity_analysis)
                 bot.delete_message(chat_id=message.chat.id, message_id=msg_wait.message_id)
