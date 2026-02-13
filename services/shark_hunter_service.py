@@ -214,7 +214,7 @@ class SharkHunterService:
                 vol = float(payload.get("lastVol", 0) or payload.get("matchVol", 0) or payload.get("vol", 0) or payload.get("matchQuantity", 0))
                 
                 total_vol = float(payload.get("totalVolumeTraded", 0) or payload.get("accumulatedVol", 0) or 0)
-                change_pc = float(payload.get("changeRatio", 0) or payload.get("changePc", 0) or 0)
+                change_pc = float(payload.get("changedRatio", 0) or payload.get("changePc", 0) or 0)
             except ValueError:
                 # If conversion fails (e.g. empty string), skip
                 return
@@ -252,6 +252,8 @@ class SharkHunterService:
                 return
 
             # Price Scaling Logic
+            # Note: Volume from DNSE is likely shares (based on PVS example 500 vol = 21M val)
+            # Reverting x10 multiplier to fix inflated values
             real_price = price if price > 1000 else price * 1000
             order_value = real_price * vol
 
@@ -302,11 +304,11 @@ class SharkHunterService:
 
 
 
-            # DEBUG THRESHOLD (Commented out for production)
-            # print(f"DEBUG CHECK: {symbol} Val={order_value:,.0f} Min={self.min_value:,.0f} Skip={order_value < self.min_value}")
+            # DEBUG THRESHOLD (Uncommented for debugging)
+            print(f"DEBUG CHECK: {symbol} Val={order_value:,.0f} Min={self.min_value:,.0f} Skip={order_value < self.min_value}")
             if order_value < self.min_value:
                 # User Requirement: 1 order must be > min_value. Do not accumulate small orders.
-                # print(f"  -> Skipped {symbol} (Value < Min)")
+                print(f"  -> Skipped {symbol} (Value < Min)")
                 return
 
             # It is a SHARK order!
