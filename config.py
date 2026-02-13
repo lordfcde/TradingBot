@@ -24,3 +24,6 @@ WEBHOOK_URL = ""
 
 # Các hằng số khác
 DEFAULT_TIMEOUT = 60
+
+# Cấu hình Shark Hunter
+SHARK_MIN_VALUE = int(os.getenv("SHARK_MIN_VALUE", 1_000_000_000))
