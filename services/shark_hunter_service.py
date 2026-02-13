@@ -2,7 +2,7 @@ import json
 import os
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from services.watchlist_service import WatchlistService
 
 # ==========================================
