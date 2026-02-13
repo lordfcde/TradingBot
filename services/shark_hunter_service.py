@@ -31,8 +31,13 @@ class SharkHunterService:
         
         # Load Dictionary Config
         self.config = self._load_dictionary()
-        self.min_value = self.config.get("settings", {}).get("min_shark_value", DEFAULT_MIN_VALUE)
-        self.cooldown = self.config.get("settings", {}).get("alert_cooldown_seconds", DEFAULT_COOLDOWN)
+        # Value Threshold: JSON > Env > Default
+        self.min_value = self.config.get("settings", {}).get("min_shark_value")
+        if not self.min_value:
+            env_val = os.getenv("SHARK_MIN_VALUE")
+            self.min_value = float(env_val) if env_val else DEFAULT_MIN_VALUE
+
+        # Cooldown: JSON > Default
         self.cooldown = self.config.get("settings", {}).get("cooldown_seconds", DEFAULT_COOLDOWN)
         self.start_time = self.config.get("settings", {}).get("start_time", DEFAULT_START_TIME)
         
@@ -111,12 +116,22 @@ class SharkHunterService:
         return {}
 
     def _load_bot_config(self):
+        # 1. Try JSON Config (Local)
         try:
             path = os.path.join(os.path.dirname(os.path.dirname(__file__)), CONFIG_FILE)
             if os.path.exists(path):
                 with open(path, 'r') as f:
                     return json.load(f).get("chat_id")
-        except: return None
+        except: pass
+        
+        # 2. Try Env (Render)
+        env_chat_id = os.getenv("SHARK_CHAT_ID") or os.getenv("ADMIN_CHAT_ID")
+        if env_chat_id:
+            try:
+                return int(env_chat_id)
+            except:
+                return env_chat_id
+                
         return None
 
     def set_alert_chat_id(self, chat_id):
