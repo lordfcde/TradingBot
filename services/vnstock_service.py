@@ -36,6 +36,7 @@ class VnstockService:
             # Get industry/sector info
             industry = "N/A"
             avg_vol_5d = 0
+            ma20_val = 0
             rsi_val = None
             
             try:
@@ -61,15 +62,26 @@ class VnstockService:
                     hist = stock_obj.quote.history(
                         symbol=symbol,
                         start=start_date.strftime('%Y-%m-%d'),
-                        end=end_date.strftime('%Y-%m-%d')
+                        end=end_date.strftime('%Y-%m-%d'),
+                        interval='1D'
                     )
                     
                     if hist is not None and not hist.empty and 'volume' in hist.columns:
                         avg_vol_5d = int(hist['volume'].tail(5).mean())
                         
-                    # Calculate RSI
-                    if hist is not None and not hist.empty and 'close' in hist.columns and len(hist) > 14:
-                        rsi_val = self._calculate_rsi(hist['close'])
+                    # Calculate MA20 (Price) and MA20 (Volume) and RSI
+                    ma20_val = 0
+                    ma20_vol = 0
+                    
+                    if hist is not None and not hist.empty:
+                        if 'close' in hist.columns and len(hist) > 20:
+                             ma20_val = hist['close'].tail(20).mean()
+                        
+                        if 'volume' in hist.columns and len(hist) > 20:
+                             ma20_vol = int(hist['volume'].tail(20).mean())
+                        
+                        if 'close' in hist.columns and len(hist) > 14:
+                            rsi_val = self._calculate_rsi(hist['close'])
                 except Exception as e:
                     print(f"⚠️ Could not get avg volume for {symbol}: {e}")
                     
@@ -100,7 +112,10 @@ class VnstockService:
                 'ask_price_1': float(stock_data.get('ask_price_1', 0)),
                 # New fields
                 'industry': industry,
+                'industry': industry,
                 'avg_vol_5d': avg_vol_5d,
+                'ma20': ma20_val,
+                'ma20_vol': ma20_vol,
                 'rsi': rsi_val,
                 'raw_data': stock_data  # Keep raw data for debugging
             }
@@ -120,14 +135,23 @@ class VnstockService:
         rsi = 100 - (100 / (1 + rs))
         return rsi.iloc[-1]  # Return latest RSI
 
-    def get_history(self, symbol, start, end, interval='1D', source='KBS'):
+    def get_history(self, symbol, start, end, interval='1D', source='VCI'):
         """
-        Get historical data using the shared Vnstock instance.
+        Get historical data for a given symbol.
+        
+        Args:
+            symbol (str): Stock symbol (e.g., 'HPG', 'VCB')
+            start (str): Start date in 'YYYY-MM-DD' format
+            end (str): End date in 'YYYY-MM-DD' format
+            interval (str): Data interval (e.g., '1D', '1H', '1M')
+            source (str): Data source (default: 'VCI')
+            
+        Returns:
+            pd.DataFrame: Historical data or None if error
         """
         try:
             # Use pre-initialized source
             stock_obj = self.stock_source.stock(symbol=symbol, source=source)
-            
             df = stock_obj.quote.history(
                 symbol=symbol,
                 start=start,
@@ -139,4 +163,56 @@ class VnstockService:
             print(f"❌ VnstockService.get_history error for {symbol}: {e}")
             import traceback
             traceback.print_exc()
+            return None
+
+    def get_intraday_stats(self, symbol):
+        """
+        Get Active Buy/Sell Stats from Intraday Data.
+        Returns:
+            {
+                'buy_vol': int,
+                'sell_vol': int,
+                'buy_ratio': float, # 0.0 - 1.0
+                'sell_ratio': float
+            }
+        """
+        try:
+            # Use pre-initialized source
+            stock_obj = self.stock_source.stock(symbol=symbol, source='VCI')
+            
+            # Fetch intraday data (max 100 pages * 10 or just fetch enough)
+            # Default page_size might be small. Let's try page_size=1000 if supported, 
+            # or just default. vnstock document implies simple usage.
+            # We want TODAY's data. 
+            # Warning: This might be slow if we fetch too much.
+            # Let's fetch page_size=100 to get "Reflect Short Term Sentiment"
+            # User likely wants "Session Total".
+            # Try fetching 500 records.
+            df = stock_obj.quote.intraday(symbol=symbol, page_size=500)
+            
+            if df is None or df.empty:
+                return None
+                
+            if 'match_type' not in df.columns:
+                return None
+                
+            # Filter
+            buy_df = df[df['match_type'].str.contains('Buy', case=False, na=False)]
+            sell_df = df[df['match_type'].str.contains('Sell', case=False, na=False)]
+            
+            buy_vol = buy_df['volume'].sum() if not buy_df.empty else 0
+            sell_vol = sell_df['volume'].sum() if not sell_df.empty else 0
+            
+            total = buy_vol + sell_vol
+            
+            return {
+                'buy_vol': int(buy_vol),
+                'sell_vol': int(sell_vol),
+                'total_analyzed': int(total),
+                'buy_ratio': buy_vol / total if total > 0 else 0,
+                'sell_ratio': sell_vol / total if total > 0 else 0
+            }
+            
+        except Exception as e:
+            print(f"⚠️ Intraday Stats Error for {symbol}: {e}")
             return None

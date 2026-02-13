@@ -24,30 +24,23 @@ class TrinityLite:
     EMA_PERIODS   = [50, 144, 233]
     CMF_LENGTH    = 20
     RSI_LENGTH    = 14
+    ADX_LENGTH    = 14    # Added for Trend Strength
     CHAIKIN_FAST  = 3
     CHAIKIN_SLOW  = 10
     VOL_AVG_LEN   = 20
-    VOL_CLIMAX_K  = 2.0   # Volume > 2× avg → climax
-    VOL_DRY_K     = 0.5   # Volume < 0.5× avg → dry
-    SHAKEOUT_LOOK = 10    # Look-back for swing low
+    VOL_CLIMAX_K  = 2.0   
+    VOL_DRY_K     = 0.5   
+    SHAKEOUT_LOOK = 10    
+    SR_LOOKBACK   = 20    # Support/Resistance Lookback (Donchian)
 
     def __init__(self):
-        print("✅ TrinityLite initialized (Fast & Furious)")
+        print("✅ TrinityLite initialized (Trinity Master AI Mode)")
 
     # ── Public API ──────────────────────────────────────────
     def analyze(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Run the full TrinityLite analysis on an OHLCV DataFrame.
-
-        Parameters
-        ----------
-        df : pd.DataFrame
-            Must contain columns: open, high, low, close, volume
-
-        Returns
-        -------
-        pd.DataFrame
-            Original df with extra indicator + signal columns appended.
+        Now includes ADX and Support/Resistance logic.
         """
         df = df.copy()
 
@@ -59,31 +52,37 @@ class TrinityLite:
         for p in self.EMA_PERIODS:
             df[f'ema_{p}'] = ta.ema(df['close'], length=p)
 
-        # ── 2. Money Flow ───────────────────────────────────
-        df['cmf'] = ta.cmf(
-            df['high'], df['low'], df['close'], df['volume'],
-            length=self.CMF_LENGTH,
-        )
-        df['chaikin'] = ta.adosc(
-            df['high'], df['low'], df['close'], df['volume'],
-            fast=self.CHAIKIN_FAST, slow=self.CHAIKIN_SLOW,
-        )
+        # ── 2. Money Flow & Momentum ────────────────────────
+        df['cmf'] = ta.cmf(df['high'], df['low'], df['close'], df['volume'], length=self.CMF_LENGTH)
+        df['chaikin'] = ta.adosc(df['high'], df['low'], df['close'], df['volume'], fast=self.CHAIKIN_FAST, slow=self.CHAIKIN_SLOW)
         df['rsi'] = ta.rsi(df['close'], length=self.RSI_LENGTH)
+
+        # ADX (Returns ADX_14, DMP_14, DMN_14)
+        adx_df = ta.adx(df['high'], df['low'], df['close'], length=self.ADX_LENGTH)
+        if adx_df is not None:
+             df = pd.concat([df, adx_df], axis=1)
+             # Rename for clarity if needed, but pandas_ta uses ADX_14
+             df['adx'] = df[f'ADX_{self.ADX_LENGTH}']
+             df['dmp'] = df[f'DMP_{self.ADX_LENGTH}']
+             df['dmn'] = df[f'DMN_{self.ADX_LENGTH}']
 
         # ── 3. VSA (Volume Spread Analysis) ─────────────────
         vol_sma = df['volume'].rolling(window=self.VOL_AVG_LEN).mean()
-        df['vol_avg'] = vol_sma  # Expose for analyzer
-
+        df['vol_avg'] = vol_sma
         df['vol_climax'] = df['volume'] > (self.VOL_CLIMAX_K * vol_sma)
         df['vol_dry']    = df['volume'] < (self.VOL_DRY_K * vol_sma)
 
-        # ── 3b. MACD (Added for Breakout Strategy) ──────────
-        # Returns: MACD_12_26_9, MACDh_12_26_9 (hist), MACDs_12_26_9 (signal)
+        # ── 3b. MACD ────────────────────────────────────────
         macd = ta.macd(df['close'])
         if macd is not None:
              df = pd.concat([df, macd], axis=1)
 
-        # Shakeout: price dipped below prior 10-bar low, but closed green + low vol
+        # ── 4. Support / Resistance (Donchian / Order Block Proxy) ──
+        # Simple Proxy: Rolling Min/Max
+        df['support_zone'] = df['low'].rolling(window=self.SR_LOOKBACK).min()
+        df['resistance_zone'] = df['high'].rolling(window=self.SR_LOOKBACK).max()
+        
+        # Shakeout
         prior_swing_low = df['low'].rolling(window=self.SHAKEOUT_LOOK).min().shift(1)
         df['shakeout'] = (
             (df['low'] < prior_swing_low)
@@ -91,24 +90,44 @@ class TrinityLite:
             & df['vol_dry']
         )
 
-        # ── 4. Signal Logic (vectorized) ────────────────────
-        # Condition 1 — Money Flow positive & accelerating
-        cond_flow = (df['cmf'] > 0) & (df['chaikin'] > df['chaikin'].shift(1))
-
-        # Condition 2 — Trend + RSI
-        cond_trend = (df['close'] > df['ema_50']) & (df['rsi'] > 50)
-
-        # Condition 3 — Trigger (Shakeout OR bullish Vol Climax)
-        bullish_climax = df['vol_climax'] & (df['close'] > df['open'])
-        cond_trigger = df['shakeout'] | bullish_climax
-
-        df['signal_buy'] = cond_flow & cond_trend & cond_trigger
-
-        # Helper: trigger label for display
-        df['trigger_type'] = np.where(
-            df['shakeout'], 'SHAKEOUT',
-            np.where(bullish_climax, 'VOL_CLIMAX', '')
+        # ── 5. Trinity Master Signal Logic ──────────────────
+        # Define Conditions
+        
+        # Trend
+        is_uptrend = (df['close'] > df['ema_50'])
+        is_adx_strong = (df['adx'] > 25)
+        is_bullish_adx = (df['dmp'] > df['dmn'])
+        
+        # Signals
+        # 💎 SUPER BUY (Diamond): Strong Uptrend + Vol Climax + CMF Positive
+        sig_diamond = (
+            is_uptrend & is_adx_strong & is_bullish_adx &
+            (df['cmf'] > 0) &
+            (df['vol_climax'] | (df['volume'] > df['vol_avg'] * 1.5))
         )
+        
+        # MÚC (Safe Buy): Uptrend + ADX > 20 + RSI Check
+        sig_muc = (
+            is_uptrend & (df['adx'] > 20) & is_bullish_adx &
+            (df['rsi'] > 50) & (df['rsi'] < 70)
+        )
+        
+        # SỚM (Early/Risky): Oversold + Vol or Divergence proxy
+        sig_som = (
+            (df['rsi'] < 30) & (df['volume'] > df['vol_avg']) & 
+            (df['close'] > df['open']) # Closing Green
+        )
+        
+        # SELL: Breakdown or Extreme Overbought
+        sig_sell = (
+            (df['close'] < df['ema_50']) & (df['rsi'] < 50)
+        ) | (df['rsi'] > 80)
+
+        # Assign Signals (Priority: Diamond > Muc > Som)
+        df['signal_type'] = np.where(sig_diamond, 'DIAMOND',
+                            np.where(sig_muc, 'MUC',
+                            np.where(sig_som, 'SOM', 
+                            np.where(sig_sell, 'SELL', 'NONE'))))
 
         return df
 
@@ -116,7 +135,7 @@ class TrinityLite:
     def get_latest_summary(self, df: pd.DataFrame) -> dict | None:
         """
         Analyse `df` and return a summary dict for the most recent bar.
-        Used by the monitor / stock handler for display.
+        Only exposes Trinity Master AI fields.
         """
         try:
             analyzed = self.analyze(df)
@@ -124,66 +143,69 @@ class TrinityLite:
                 return None
 
             last = analyzed.iloc[-1]
-            prev = analyzed.iloc[-2] if len(analyzed) > 1 else last # For chaikin comparison
+            prev = analyzed.iloc[-2] if len(analyzed) > 1 else last
 
-            cmf_val = last.get('cmf', 0)
-            if pd.notna(cmf_val) and cmf_val > 0.1:
-                cmf_status = "VÀO MẠNH 🔥"
-            elif pd.notna(cmf_val) and cmf_val > 0:
-                cmf_status = "VÀO NHẸ ✅"
+            # 1. ADX Status (Dashboard)
+            adx_val = last.get('adx', 0)
+            dmp = last.get('dmp', 0)
+            dmn = last.get('dmn', 0)
+            
+            if adx_val > 50:
+                adx_status = "QUÁ NÓNG 🟠"
+            elif adx_val > 25:
+                if dmp > dmn: adx_status = "MẠNH TĂNG 🟢"
+                else: adx_status = "MẠNH GIẢM 🔴"
             else:
-                cmf_status = "RA NGOÀI ❌"
+                adx_status = "YẾU/SIDEWAY ⚪"
 
-            close = float(last['close']) if pd.notna(last['close']) else 0.0
-            ema50 = float(last.get('ema_50', 0)) if pd.notna(last.get('ema_50')) else 0.0
-            ema233 = float(last.get('ema_233', 0)) if pd.notna(last.get('ema_233')) else 0.0
+            # 2. Structure (S/R)
+            close = float(last['close'])
+            sup = float(last.get('support_zone', 0))
+            res = float(last.get('resistance_zone', 0))
+            
+            structure = "Bình thường"
+            if close <= sup * 1.02:
+                structure = "Chạm Hỗ trợ (Hộp Xanh)"
+            elif close >= res * 0.98:
+                structure = "Chạm Kháng cự (Hộp Đỏ)"
+            elif close > float(last.get('ema_50', 0)):
+                structure = "Trên EMA50 (Tăng)"
 
-            if ema50 > 0 and close > ema50:
-                trend = "UPTREND ✅"
-            elif ema233 > 0 and close > ema233:
-                trend = "SIDEWAY ⚪"
-            else:
-                trend = "DOWNTREND ❌"
-
-            signal_name = None
-            if last.get('signal_buy', False):
-                signal_name = "MUA FAST ⚡"
-
+            # 3. Signal
+            sig_type = last.get('signal_type', 'NONE')
+            signal_emoji = ""
+            if sig_type == 'DIAMOND': signal_emoji = "💎 SUPER BUY"
+            elif sig_type == 'MUC': signal_emoji = "✅ MÚC (An toàn)"
+            elif sig_type == 'SOM': signal_emoji = "⚠️ SỚM (Rủi ro)"
+            elif sig_type == 'SELL': signal_emoji = "🚨 BÁN"
+            
+            # Helper stuff
             def safe_float(val, default=0.0):
-                """Convert to float, replacing NaN/None with default."""
                 try:
                     v = float(val)
                     return v if pd.notna(v) else default
-                except (TypeError, ValueError):
-                    return default
+                except: return default
 
-            # Attempt to get MACD Hist
-            # pandas_ta default col: MACDh_12_26_9
-            macd_hist = safe_float(last.get('MACDh_12_26_9', 0))
-            
             return {
-                'signal': signal_name,
-                'cmf': safe_float(cmf_val),
-                'chaikin': safe_float(last.get('chaikin', 0)),
-                'prev_chaikin': safe_float(prev.get('chaikin', 0)), # Added for scoring
+                'signal': signal_emoji,
+                'signal_code': sig_type, # For logic checks
+                'adx': safe_float(adx_val),
+                'adx_status': adx_status,
+                'is_bullish': (dmp > dmn),
+                'structure': structure,
+                'support': sup,
+                'resistance': res,
                 'rsi': safe_float(last.get('rsi', 0)),
-                'close': float(close),
-                'ema50': float(ema50),
-                'ema144': safe_float(last.get('ema_144', 0)),
-                'ema233': float(ema233),
+                'cmf': safe_float(last.get('cmf', 0)),
                 'vol_climax': bool(last.get('vol_climax', False)),
-                'vol_dry': bool(last.get('vol_dry', False)),
-                'shakeout': bool(last.get('shakeout', False)),
-                'trigger': last.get('trigger_type', ''),
-                'trend': trend,
-                'cmf_status': cmf_status,
+                'close': close,
                 'volume': safe_float(last.get('volume', 0)),
-                'vol_avg': safe_float(last.get('vol_avg', 0)), # Added
-                'macd_hist': macd_hist, # Added
+                'vol_avg': safe_float(last.get('vol_avg', 0)),
+                'trend': "UPTREND" if close > last.get('ema_50', 0) else "DOWNTREND"
             }
 
         except Exception as e:
-            print(f"❌ TrinityLite.get_latest_summary error: {e}")
+            print(f"❌ TrinityLite error: {e}")
             import traceback
             traceback.print_exc()
             return None

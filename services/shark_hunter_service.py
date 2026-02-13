@@ -213,7 +213,7 @@ class SharkHunterService:
                 price = float(payload.get("lastPrice", 0) or payload.get("matchPrice", 0) or payload.get("price", 0))
                 vol = float(payload.get("lastVol", 0) or payload.get("matchVol", 0) or payload.get("vol", 0) or payload.get("matchQuantity", 0))
                 
-                total_vol = float(payload.get("totalVolumeTraded", 0) or payload.get("accumulatedVol", 0) or 0)
+                total_vol = float(payload.get("totalVolumeTraded", 0) or payload.get("accumulatedVol", 0) or 0) * 10
                 change_pc = float(payload.get("changedRatio", 0) or payload.get("changePc", 0) or 0)
             except ValueError:
                 # If conversion fails (e.g. empty string), skip
@@ -609,34 +609,52 @@ class SharkHunterService:
             now = time.time()
 
             # 1. Cache check (avoid API spam: 60s cache per symbol)
-            cached = self.trinity_cache.get(symbol)
-            if cached and (now - cached['time'] < 60):
-                analysis = cached['data']
-                print(f"⚡ Analyzer Cache Hit for {symbol}")
-            else:
-                print(f"🦈🧠 Running Hybrid Analysis for: {symbol}...")
-                analysis = self.analyzer.check_signal(symbol)
-                self.trinity_cache[symbol] = {'time': now, 'data': analysis}
-
-            # 2. Send SUPER SIGNAL alert ONLY if BUY rating (not WATCH)
-            if analysis and analysis.get('rating') == 'BUY':
-                self.send_super_signal(symbol, price, change_pc, order_value, vol, side, analysis)
-            elif analysis:
-                print(f"⚪ {symbol} SUPER SIGNAL skipped (Rating: {analysis.get('rating', 'N/A')} - not BUY)")
+            # We skip cache for Judgement because Market Context might change? 
+            # No, Market Context (MA20) is daily. Real-time index is fast.
+            # But cache TrinityLite is fine.
+            # Let's perform Judge call fresh to ensure context is verified.
             
-            # 3. Add to Watchlist ONLY if BUY rating (not WATCH or neutral)
-            if analysis and analysis.get('rating') == 'BUY':
-                shark_data = {
-                    'price': price,
-                    'change_pc': change_pc,
-                    'order_value': order_value,
-                    'vol': vol,
-                    'side': side,
-                }
-                self.watchlist_service.add_enriched(symbol, shark_data, analysis)
-                print(f"✅ {symbol} added to Watchlist (Rating: BUY)")
-            elif analysis:
-                print(f"⚪ {symbol} skipped Watchlist (Rating: {analysis.get('rating', 'N/A')} - not BUY)")
+            shark_payload = {
+                'price': price,
+                'change_pc': change_pc,
+                'total_vol': total_vol,
+                'order_value': order_value,
+                'vol': vol,
+                'side': side
+            }
+            
+            print(f"⚖️ TRINITY JUDGE: Judging {symbol}...")
+            result = self.analyzer.judge_signal(symbol, shark_payload)
+            
+            if result['approved']:
+                # Send BREAKOUT Alert (High Quality)
+                if self.alert_chat_id:
+                    self.bot.send_message(self.alert_chat_id, result['message'], parse_mode='Markdown')
+                    print(f"🚀 BREAKOUT ALERT SENT: {symbol}")
+                
+                # Add to Watchlist
+                self.watchlist_service.add_enriched(symbol, shark_payload, result['analysis'])
+                
+            else:
+                # REJECTED by Judge -> Send RAW SHARK STREAM (Sensitivity Test)
+                # User request: "muốn một luồng... chuyên nhận lệnh cá mập... kiểm tra độ nhạy"
+                # Logic: If order > 1B (which it is to get here), send Raw Alert with Warning.
+                
+                print(f"⛔ {symbol} REJECTED by Judge: {result['reason']}")
+                
+                if self.alert_chat_id:
+                    # Construct Raw Message
+                    val_billion = order_value / 1_000_000_000
+                    side_text = "MUA" if side == "Buy" else "BÁN"
+                    icon = "🟢" if side == "Buy" else "🔴"
+                    
+                    raw_msg = (
+                        f"🦈 **SHARK BITE (RAW): #{symbol}**\n"
+                        f"{icon} **{side_text} {val_billion:.1f} Tỷ** | Giá: `{price:,.0f}` ({change_pc:+.2f}%)\n"
+                        f"⚠️ *Judge Reject: {result['reason']}*"
+                    )
+                    self.bot.send_message(self.alert_chat_id, raw_msg, parse_mode='Markdown')
+                    print(f"🦈 RAW ALERT SENT: {symbol}")
 
         except Exception as e:
             print(f"❌ Hybrid Analysis Error for {symbol}: {e}")

@@ -85,7 +85,7 @@ def get_enriched_trinity_analysis(symbol, trinity_service, vnstock_service, shar
         from services.analyzer import TrinityAnalyzer
         # Initialize with shared service
         analyzer = TrinityAnalyzer(vnstock_service)
-        analyzer_result = analyzer.check_signal(symbol)
+        analyzer_result = analyzer.check_signal(symbol, timeframe="1D") # FORCE DAILY for /stock
         
         if trinity_analysis is None:
             trinity_analysis = analyzer_result
@@ -127,229 +127,195 @@ def get_realtime_price_async(dnse_service, symbol, timeout=5.0):
 
 def format_stock_reply(data, shark_service=None, trinity_data=None):
     """
-    Helper function to format stock data message.
+    Format stock data message in 'Trinity Master AI' persona.
     """
     stock_id = data.get("symbol", "UNKNOWN")
     price = float(data.get("matchPrice", 0))
+    # Normalize Price to K-VND (Handle 160000 vs 160)
+    if price > 500:
+        price = price / 1000
+    
     change_pc = float(data.get("changedRatio", 0))
-    ref_price = float(data.get("referencePrice", 0))
-    
-    print(f"🔹 DEBUG STOCK PAYLOAD [{stock_id}]: {data}")
-
-    # New fields
-    high_price = float(data.get("highestPrice", 0) or data.get("highPrice", 0))
-    low_price = float(data.get("lowestPrice", 0) or data.get("lowPrice", 0))
-    avg_price = float(data.get("avgPrice", 0) or data.get("averagePrice", 0))
-    
-    # If Avg is 0, leave it or hide it? unique request: "calculate if not exists"
-    # We assume API gives it. If 0, we show 0.
     
     vol_str = str(data.get("totalVolumeTraded", "0"))
     raw_total_vol = int(vol_str) if vol_str.isdigit() else 0
-    total_vol = raw_total_vol * 10  # Fix: Multiply by 10 to match real volume
+    total_vol = raw_total_vol * 10  # Fix: Multiply by 10
     
     # Date
-    # data might have 'time' or 'transactTime'
-    # Default to current time if missing -> Force to UTC+7 (Vietnam Time)
-    log_time = (datetime.utcnow() + timedelta(hours=7)).strftime("%d/%m/%Y %H:%M:%S")
+    log_time = (datetime.utcnow() + timedelta(hours=7)).strftime("%H:%M %d/%m")
     
-    # Buy/Sell Surplus Removed as per request
-    # Add Last Match Volume (User says Unit is 10, so x10)
-    # FILTER: odd lots (<100) are ignored.
-    raw_match_vol = int(data.get("matchQuantity", 0) or data.get("matchVolume", 0) or data.get("lastVol", 0) or 0)
-    match_vol = raw_match_vol * 10
-    
-    # Hide if Odd Lot (Volume < 100)
-    if match_vol < 100:
-        match_vol = 0
-
+    # Icons
     if change_pc > 0: trend_icon = "📈"
     elif change_pc < 0: trend_icon = "📉"
     else: trend_icon = "🟡"
 
-    # Get industry and avg volume if available
-    industry = data.get("industry", "N/A")
-    avg_vol_5d = data.get("avg_vol_5d", 0)
-    rsi = data.get("rsi", None)
-
-    # Match Time (from payload or current)
-    # MQTT often returns time in HH:mm:ss format (e.g., 05:00:00 for 12:00 UTC+7?)
-    # or it might be raw UTC. User reports 5AM -> 12PM gap (7 hours).
-    match_time_raw = data.get("time") or log_time.split(" ")[1]
-    
-    # Try to fix timezone if it looks like early morning (UTC)
-    match_time = match_time_raw
-    try:
-        if ":" in match_time_raw and len(match_time_raw.split(":")) >= 2:
-            parts = match_time_raw.split(":")
-            h = int(parts[0])
-            m = int(parts[1])
-            s = int(parts[2]) if len(parts) > 2 else 0
-            
-            # Simple heuristic: If hour < 7, add 7 to match Vietnam Time (UTC+7)
-            # Market opens 9:00. If we see 02:00 (9AM), 05:00 (12PM), etc.
-            if h < 8: 
-                h += 7
-                match_time = f"{h:02d}:{m:02d}:{s:02d}"
-    except:
-        pass
-
-    base_msg = (
-        f"-----------------------------\n"
-        f"🔥 **{stock_id}** (Real-time)\n"
-        f"🕒 Cập nhật: `{log_time}`\n"
-        f"-----------------------------\n"
-        f"💰 Giá: `{price:,.2f}` ({change_pc:+.2f}% {trend_icon})\n"
-        f"🔨 **Khớp Lệnh**: `{match_time}`\n"
-        f"📦 **KL Khớp Cuối**: `{match_vol:,.0f}`\n"
-        f"⚖️ Tham chiếu: `{ref_price:,.2f}`\n"
-        f"📊 Tổng Vol: `{total_vol:,.0f}`\n"
-    )
-    
-    # Add industry if available
-    if industry and industry != "N/A":
-        base_msg += f"🏢 Ngành: `{industry}`\n"
-    
-    # Add 5-day avg volume if available
-    if avg_vol_5d > 0:
-        base_msg += f"📉 TB Vol 5D: `{avg_vol_5d:,.0f}`\n"
-        
-    # Add RSI if available
-    if rsi is not None:
-        rsi_icon = "🔴" if rsi > 70 else "🟢" if rsi < 30 else "🟡"
-        rsi_status = "Quá mua" if rsi > 70 else "Quá bán" if rsi < 30 else "Trung lập"
-        base_msg += f"📈 RSI(14): `{rsi:.1f}` {rsi_icon} ({rsi_status})\n"
-    
-    base_msg += (
-        f"-----------------------------\n"
-        f"📈 Cao nhất: `{high_price:,.2f}`\n"
-        f"📉 Thấp nhất: `{low_price:,.2f}`\n"
-        f"➗ Trung bình: `{avg_price:,.2f}`"
-    )
-
-    # 🦈 Shark Stats (Added)
+    # 🦈 Shark Stats
+    shark_msg = ""
     if shark_service:
         try:
             s_buy, s_sell = shark_service.get_shark_stats(stock_id)
             if s_buy > 0 or s_sell > 0:
                 s_net = s_buy - s_sell
                 icon = "🟢" if s_net >= 0 else "🔴"
-                base_msg += (
-                    f"\n-----------------------------\n"
-                    f"🦈 **Cá mập (>1Tỷ)**: {icon} `{s_net/1e9:,.1f}` Tỷ\n"
-                    f"(Mua: {s_buy/1e9:.1f}T - Bán: {s_sell/1e9:.1f}T)"
-                )
+                shark_msg = f"\n🦈 **Cá Mập**: {icon} `{s_net/1e9:,.1f}T` (M:{s_buy/1e9:.0f} - B:{s_sell/1e9:.0f})"
         except: pass
+
+    # ── TRINITY MASTER AI FORMAT ─────────────────────────────
     
-    base_msg += "\n-----------------------------"
+    # Default values if no Trinity data
+    t_trend = "N/A"
+    t_adx_status = "⚪ PRODATA"
+    t_signal = ""
+    t_structure = "Đang cập nhật..."
+    t_support = 0
+    t_res = 0
+    t_vol_avg = 0
+    t_rsi = 0
+    t_adx = 0
+    t_reasons = []
     
-    # Add Trinity Analysis if available
     if trinity_data:
         t_trend = trinity_data.get('trend', 'N/A')
-        t_cmf = trinity_data.get('cmf', 0)
-        t_chaikin = trinity_data.get('chaikin', 0)
+        t_adx_status = trinity_data.get('adx_status', '⚪ PRODATA')
+        t_signal = trinity_data.get('signal', '')
+        t_structure = trinity_data.get('structure', '')
+        t_support = trinity_data.get('support', 0)
+        t_res = trinity_data.get('resistance', 0)
+        t_vol_avg = trinity_data.get('vol_avg', 0)
         t_rsi = trinity_data.get('rsi', 0)
-        t_signal = trinity_data.get('signal')
-        t_rating = trinity_data.get('rating', 'UNKNOWN')  # From analyzer
-        cmf_st = trinity_data.get('cmf_status', '')
-        t_trigger = trinity_data.get('trigger', '')
+        t_adx = trinity_data.get('adx', 0)
+        t_reasons = trinity_data.get('reasons', [])
+        
+    # RSI Status
+    rsi_status = "Trung tính"
+    if t_rsi > 70: rsi_status = "Quá mua ⚠️"
+    elif t_rsi < 30: rsi_status = "Quá bán 🟢"
+    elif t_rsi > 60: rsi_status = "Mạnh"
+    elif t_rsi < 40: rsi_status = "Yếu"
 
-        base_msg += f"\n⚡ **Trinity Fast 1H:**\n"
-        base_msg += f"• Xu hướng: {t_trend}\n"
-        base_msg += f"• Dòng tiền: {t_cmf:.2f} ({cmf_st})\n"
-        base_msg += f"• Chaikin: {t_chaikin:+,.0f}\n"
-        base_msg += f"• RSI: {t_rsi:.1f}\n"
-        if t_trigger:
-            trigger_label = "🔄 Rũ bỏ" if t_trigger == 'SHAKEOUT' else "💥 Vol đột biến"
-            base_msg += f"• Trigger: {trigger_label}\n"
-        if t_signal:
-            base_msg += f"⚡ **Tín hiệu: {t_signal}**\n"
-        
-        # === MULTI-LAYER SCORING SYSTEM ===
-        base_msg += "\n-----------------------------\n"
-        base_msg += "📊 **PHÂN TÍCH ĐA TẦNG**\n"
-        
-        score = 0
-        reasons = []
-        
-        # Layer 1: Real-time signals
-        if change_pc > 2:
-            score += 2
-            reasons.append("✅ Tăng giá mạnh")
-        elif change_pc > 0:
-            score += 1
-            reasons.append("✅ Tăng giá nhẹ")
-        elif change_pc < -2:
-            score -= 1
-            reasons.append("⚠️ Giảm giá mạnh")
-        
-        # Volume ratio
-        vol_ratio = (total_vol / avg_vol_5d * 100) if avg_vol_5d > 0 else 0
-        if vol_ratio > 150:
-            score += 2
-            reasons.append("✅ Vol đột biến")
-        elif vol_ratio > 100:
-            score += 1
-            reasons.append("✅ Vol tăng")
-        elif vol_ratio < 50 and vol_ratio > 0:
-            score -= 1
-            reasons.append("⚠️ Vol thấp")
-        
-        # Layer 2: Trinity signals
-        if t_rating == "BUY" or (t_signal and "MUA" in str(t_signal).upper()):
-            score += 3
-            reasons.append("✅ Trinity: BUY (Signal)")
-        elif t_rating == "WATCH":
-            score += 1
-            reasons.append("⚪ Trinity: WATCH")
+    # Reason String
+    reason_str = ""
+    if t_reasons:
+        reason_lines = [f"• {r}" for r in t_reasons]
+        reason_str = "\n📝 **LÝ DO KHUYẾN NGHỊ:**\n" + "\n".join(reason_lines) + "\n"
+
+    # --- EVALUATION LOGIC ---
+    evaluation = "Thị trường chưa rõ xu hướng."
+    action = "QUAN SÁT 🟡"
+    advice = f"Theo dõi vùng giá {price}"
+    
+    # Logic for Evaluation
+    if "MÚC" in t_signal or "DIAMOND" in t_signal:
+        evaluation = "Dòng tiền vào mạnh, xu hướng tăng được xác nhận."
+        action = "MUA MARGIN 🚀" if "DIAMOND" in t_signal else "MUA GIA TĂNG 🟢"
+        advice = f"Mục tiêu ngắn hạn: {t_res:,.0f}. Cắt lỗ nếu thủng {t_support:,.0f}."
+    elif "SỚM" in t_signal:
+        evaluation = "Có tín hiệu bắt đáy nhưng rủi ro còn cao."
+        action = "MUA THĂM DÒ 🔵"
+        advice = "Chỉ đi lệnh nhỏ (10-20% NAV). Chờ xác nhận thêm."
+    elif "BÁN" in t_signal:
+        evaluation = "Gãy xu hướng hoặc chạm kháng cự mạnh."
+        action = "BÁN NGAY 🔴"
+        advice = "Bảo toàn lợi nhuận, không bắt dao rơi."
+    elif "MẠNH TĂNG" in t_adx_status:
+         evaluation = "Xu hướng tăng đang rất khỏe."
+         action = "NẮM GIỮ 🟢"
+         advice = "Gồng lãi tiếp, chưa có dấu hiệu đảo chiều."
+    elif "MẠNH GIẢM" in t_adx_status:
+        evaluation = "Xu hướng giảm đang chiếm ưu thế."
+        action = "QUAN SÁT 🟡"
+        advice = f"Kiên nhẫn chờ giá về vùng hỗ trợ {t_support:,.0f}."
+
+    # Construct Message
+    # Data from Vnstock (Daily/Static)
+    d_vol_avg = data.get('avg_vol_5d', 0)
+
+    msg = (
+        f"🔥 **TRINITY SCAN: {stock_id}** (Khung H1)\n"
+        f"🕒 `{log_time}` | 💰 `{price:,.2f}` ({change_pc:+.2f}%) {trend_icon}\n"
+        f"📊 **Vol**: `{total_vol/1e6:.1f}M` (TB5D: `{d_vol_avg/1e6:.1f}M`){shark_msg}\n"
+        f"---------------------------------\n"
+        f"📊 **TRẠNG THÁI:**\n"
+        f"• Xu hướng: {t_trend} (ADX: `{t_adx:.1f}`)\n"
+        f"• RSI: `{t_rsi:.1f}` ({rsi_status})\n"
+        f"• Tín hiệu: {t_signal if t_signal else 'Không có'}\n"
+        f"• Cấu trúc: {t_structure}\n"
+        f"{reason_str}"
+        f"\n"
+        f"🛡️ **ĐÁNH GIÁ:**\n"
+        f"{evaluation}\n"
+        f"\n"
+        f"🎯 **HÀNH ĐỘNG:**\n"
+        f"👉 **{action}**\n"
+        f"\n"
+        f"💡 *Lời khuyên:* {advice}"
+    )
             
-        # Bonus for Uptrend
-        if t_trend and "UPTREND" in str(t_trend).upper():
-            score += 1
-            reasons.append("✅ Xu hướng Tăng")
-        
-        if t_rsi > 70:
-            score -= 1
-            reasons.append("⚠️ RSI quá mua")
-        elif t_rsi > 50:
-            score += 1
-            reasons.append("✅ RSI mạnh")
-        
-        if t_cmf > 0.1:
-            score += 2
-            reasons.append("✅ Tiền vào mạnh")
-        elif t_cmf > 0:
-            score += 1
-            reasons.append("✅ Tiền vào nhẹ")
-        elif t_cmf < -0.1:
-            score -= 1
-            reasons.append("⚠️ Tiền ra mạnh")
-        
-        # Display reasons
-        base_msg += "📋 Yếu tố:\n"
-        for r in reasons[:5]:  # Limit to 5 key reasons
-            base_msg += f"  {r}\n"
-        
-        # Final score and recommendation
-        base_msg += f"\n🔢 Điểm: **{score}/10**\n"
-        
-        if score >= 6:
-            recommendation = "🟢 THÊM WATCHLIST"
-            rec_icon = "🟢"
-        elif score >= 3:
-            recommendation = "🟡 THEO DÕI"
-            rec_icon = "🟡"
-        else:
-            recommendation = "🔴 BỎ QUA"
-            rec_icon = "🔴"
-        
-        base_msg += f"💡 Gợi ý: **{rec_icon} {recommendation}**"
-            
-    return base_msg
+    return msg
 
 def handle_stock_price(bot, message, dnse_service, shark_service=None, vnstock_service=None, trinity_service=None):
     """Xử lý lệnh /stock (Updated to match Search logic)"""
     try:
+        symbol = message.text.split()[1].upper()
+        # print(f"User requested stock: {symbol}")
+        
+        # Send "Searching..." message
+        msg_wait = bot.send_message(message.chat.id, f"🔍 Đang phân tích kỹ thuật {symbol}...", parse_mode='Markdown')
+        
+        # 1. Fetch Realtime Data
+        enriched_data = vnstock_service.get_stock_info(symbol)
+        if not enriched_data:
+             bot.edit_message_text("❌ Không tìm thấy mã này.", chat_id=message.chat.id, message_id=msg_wait.message_id)
+             return
+
+        # 2. Trinity Analysis
+        # Ensure we pass the enriched data to Trinity calculator if possible, 
+        # but TrinityAnalyzer largely fetches its own data.
+        # Check get_enriched_trinity_analysis implementation.
+        
+        trinity_analysis_result = get_enriched_trinity_analysis(
+            symbol, trinity_service, vnstock_service, 
+            shark_service, bot, message.chat.id
+        )
+        
+        # DEBUG: Print keys to see what we got
+        # print(f"DEBUG TRINITY KEYS: {trinity_analysis_result.keys()}")
+        
+        # get_enriched_trinity_analysis returns a DICT.
+        # STRUCTURE CONFIRMATION NEEDED. 
+        # Typically it returns: { 'enriched_data': ..., 'trend': ..., 'adx': ... }
+        # IF IT DOES NOT return 'enriched_data' inside, we must rely on 'enriched_data' fetched in step 1.
+        
+        # Let's inspect 'trinity_analysis_result'. 
+        # If it contains flat keys like 'trend', 'adx_status', we pass it as 'trinity_data'.
+        
+        # FIX: The previous code was passing 'trinity_analysis['enriched_data']' which might fail 
+        # if the key didn't exist, causing the entire block to crash or return empty?
+        # Actually the previous code (before I touched it) was working.
+        # My recent change:
+        # analysis = get_enriched_trinity_analysis(...)
+        # reply_msg = format_stock_reply(enriched_data, shark_service, analysis)
+        
+        # ISSUE: 'enriched_data' passed to format_stock_reply MUST contain 'avg_vol_5d'.
+        # vnstock_service.get_stock_info returns it.
+        # Check if 'avg_vol_5d' is 0 or None.
+        
+        if enriched_data.get('avg_vol_5d') == 0:
+            # Try to populate it from Trinity Analysis if available
+            if trinity_analysis_result.get('vol_avg'):
+                enriched_data['avg_vol_5d'] = trinity_analysis_result.get('vol_avg')
+        
+        reply_msg = format_stock_reply(enriched_data, shark_service, trinity_analysis_result)
+        bot.delete_message(chat_id=message.chat.id, message_id=msg_wait.message_id)
+        bot.send_message(message.chat.id, reply_msg, parse_mode='Markdown')
+        
+    except IndexError:
+        bot.reply_to(message, "⚠️ Vui lòng nhập mã cổ phiếu. Ví dụ: /stock HPG")
+    except Exception as e:
+        print(f"Stock Handler Error: {e}")
+        import traceback
+        traceback.print_exc()
+        bot.send_message(message.chat.id, "❌ Lỗi hệ thống khi lấy dữ liệu.")
         parts = message.text.split()
         if len(parts) < 2:
             bot.reply_to(message, "⚠️ Vui lòng nhập mã cổ phiếu. Ví dụ: `/stock HPG`", parse_mode='Markdown')
