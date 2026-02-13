@@ -172,7 +172,26 @@ def format_stock_reply(data, shark_service=None, trinity_data=None):
     rsi = data.get("rsi", None)
 
     # Match Time (from payload or current)
-    match_time = data.get("time") or log_time.split(" ")[1]
+    # MQTT often returns time in HH:mm:ss format (e.g., 05:00:00 for 12:00 UTC+7?)
+    # or it might be raw UTC. User reports 5AM -> 12PM gap (7 hours).
+    match_time_raw = data.get("time") or log_time.split(" ")[1]
+    
+    # Try to fix timezone if it looks like early morning (UTC)
+    match_time = match_time_raw
+    try:
+        if ":" in match_time_raw and len(match_time_raw.split(":")) >= 2:
+            parts = match_time_raw.split(":")
+            h = int(parts[0])
+            m = int(parts[1])
+            s = int(parts[2]) if len(parts) > 2 else 0
+            
+            # Simple heuristic: If hour < 7, add 7 to match Vietnam Time (UTC+7)
+            # Market opens 9:00. If we see 02:00 (9AM), 05:00 (12PM), etc.
+            if h < 8: 
+                h += 7
+                match_time = f"{h:02d}:{m:02d}:{s:02d}"
+    except:
+        pass
 
     base_msg = (
         f"-----------------------------\n"
