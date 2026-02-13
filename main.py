@@ -270,6 +270,17 @@ if __name__ == "__main__":
 
     # 3. Start Telebot (Blocking)
     try:
+        # Send startup message
+        from config import SHARK_MIN_VALUE
+        startup_msg = (
+            f"🤖 **TRINITY MASTER AI ĐÃ KÍCH HOẠT!** 🚀\n"
+            f"🕒 Khởi động lúc: `{datetime.now().strftime('%H:%M:%S')}`\n"
+            f"✅ Hệ thống sẵn sàng phục vụ.\n"
+            f"-----------------------------\n"
+            f"📊 Threshold: {SHARK_MIN_VALUE/1e9} Tỷ VND"
+        )
+        bot.send_message(chat_id=ADMIN_ID, text=startup_msg, parse_mode='Markdown')
+        
         bot.polling(none_stop=True)
     except Exception as e:
         logger.error(f"❌ Main Loop Error: {e}")
