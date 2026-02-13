@@ -251,12 +251,17 @@ def format_stock_reply(data, shark_service=None, trinity_data=None):
             reasons.append("⚠️ Vol thấp")
         
         # Layer 2: Trinity signals
-        if t_rating == "BUY":
+        if t_rating == "BUY" or (t_signal and "MUA" in str(t_signal).upper()):
             score += 3
-            reasons.append("✅ Trinity: BUY")
+            reasons.append("✅ Trinity: BUY (Signal)")
         elif t_rating == "WATCH":
             score += 1
             reasons.append("⚪ Trinity: WATCH")
+            
+        # Bonus for Uptrend
+        if t_trend and "UPTREND" in str(t_trend).upper():
+            score += 1
+            reasons.append("✅ Xu hướng Tăng")
         
         if t_rsi > 70:
             score -= 1
