@@ -99,13 +99,17 @@ def format_stock_reply(data, shark_service=None, trinity_data=None):
     avg_vol_5d = data.get("avg_vol_5d", 0)
     rsi = data.get("rsi", None)
 
+    # Match Time (from payload or current)
+    match_time = data.get("time") or log_time.split(" ")[1]
+
     base_msg = (
         f"-----------------------------\n"
         f"🔥 **{stock_id}** (Real-time)\n"
-        f"🕒 `{log_time}`\n"
+        f"🕒 Cập nhật: `{log_time}`\n"
         f"-----------------------------\n"
         f"💰 Giá: `{price:,.2f}` ({change_pc:+.2f}% {trend_icon})\n"
-        f"📦 KL Khớp: `{match_vol:,.0f}`\n"
+        f"🔨 **Khớp Lệnh**: `{match_time}`\n"
+        f"📦 **KL Khớp Cuối**: `{match_vol:,.0f}`\n"
         f"⚖️ Tham chiếu: `{ref_price:,.2f}`\n"
         f"📊 Tổng Vol: `{total_vol:,.0f}`\n"
     )
