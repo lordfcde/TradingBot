@@ -284,14 +284,16 @@ class TrinitySignalMonitor:
             end_date = datetime.now()
             start_date = end_date - timedelta(days=30)
 
-            from vnstock import Vnstock
-            stock = Vnstock().stock(symbol=symbol, source='KBS')  # KBS has better intraday data quality
+            # from vnstock import Vnstock
+            # stock = Vnstock().stock(symbol=symbol, source='KBS')  # KBS has better intraday data quality
 
-            df = stock.quote.history(
+            # Use shared service to avoid reloading mappings
+            df = self.vnstock_service.get_history(
                 symbol=symbol,
                 start=start_date.strftime('%Y-%m-%d'),
                 end=end_date.strftime('%Y-%m-%d'),
                 interval=timeframe,
+                source='KBS'
             )
 
             if df is None or df.empty:
