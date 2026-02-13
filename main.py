@@ -5,7 +5,7 @@ import config
 import logging
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os
 
 # Services
@@ -158,7 +158,7 @@ class BotScheduler:
                 # datetime.now(timezone.utc) is safer. But let's keep it simple.
                 
                 # Using simple offset logic to be robust
-                utc_now = datetime.utcnow()
+                utc_now = datetime.now(timezone.utc)
                 vn_now = utc_now + timedelta(hours=7)
                 
                 tick = vn_now.strftime("%H:%M")
