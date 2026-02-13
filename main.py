@@ -271,7 +271,7 @@ if __name__ == "__main__":
     # 3. Start Telebot (Blocking)
     try:
         # Send startup message
-        from config import SHARK_MIN_VALUE, ADMIN_ID
+        from config import SHARK_MIN_VALUE, ADMIN_CHAT_ID
         startup_msg = (
             f"🤖 **TRINITY MASTER AI ĐÃ KÍCH HOẠT!** 🚀\n"
             f"🕒 Khởi động lúc: `{datetime.now().strftime('%H:%M:%S')}`\n"
@@ -280,7 +280,7 @@ if __name__ == "__main__":
             f"📊 Threshold: {SHARK_MIN_VALUE/1e9} Tỷ VND"
         )
         try:
-            bot.send_message(chat_id=ADMIN_ID, text=startup_msg, parse_mode='Markdown')
+            bot.send_message(chat_id=ADMIN_CHAT_ID, text=startup_msg, parse_mode='Markdown')
         except Exception as e:
             logger.error(f"⚠️ Could not send startup msg: {e}")
         
