@@ -119,3 +119,24 @@ class VnstockService:
         rs = gain / loss
         rsi = 100 - (100 / (1 + rs))
         return rsi.iloc[-1]  # Return latest RSI
+
+    def get_history(self, symbol, start, end, interval='1D', source='KBS'):
+        """
+        Get historical data using the shared Vnstock instance.
+        """
+        try:
+            # Use pre-initialized source
+            stock_obj = self.stock_source.stock(symbol=symbol, source=source)
+            
+            df = stock_obj.quote.history(
+                symbol=symbol,
+                start=start,
+                end=end,
+                interval=interval
+            )
+            return df
+        except Exception as e:
+            print(f"❌ VnstockService.get_history error for {symbol}: {e}")
+            import traceback
+            traceback.print_exc()
+            return None

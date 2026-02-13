@@ -158,7 +158,7 @@ def format_stock_reply(data, shark_service=None, trinity_data=None):
         cmf_st = trinity_data.get('cmf_status', '')
         t_trigger = trinity_data.get('trigger', '')
 
-        base_msg += f"\n⚡ **Trinity Fast 30m:**\n"
+        base_msg += f"\n⚡ **Trinity Fast 1H:**\n"
         base_msg += f"• Xu hướng: {t_trend}\n"
         base_msg += f"• Dòng tiền: {t_cmf:.2f} ({cmf_st})\n"
         base_msg += f"• Chaikin: {t_chaikin:+,.0f}\n"
@@ -284,7 +284,7 @@ def handle_stock_price(bot, message, dnse_service, shark_service=None, vnstock_s
                 trinity_analysis = None
                 if trinity_service:
                     try:
-                        trinity_analysis = trinity_service.get_analysis(symbol)
+                        trinity_analysis = trinity_service.get_analysis(symbol, timeframe="1H")
                         
                         if trinity_analysis and trinity_analysis.get('signal'):
                             sig_name = trinity_analysis['signal']
@@ -373,7 +373,7 @@ def process_stock_search_step(bot, message, dnse_service=None, shark_service=Non
                 if trinity_service:
                     try:
                         # Get full analysis instead of just signal
-                        trinity_analysis = trinity_service.get_analysis(symbol)
+                        trinity_analysis = trinity_service.get_analysis(symbol, timeframe="1H")
                         
                         if trinity_analysis and trinity_analysis.get('signal'):
                             sig_name = trinity_analysis['signal']
