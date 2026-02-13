@@ -100,6 +100,31 @@ def get_enriched_trinity_analysis(symbol, trinity_service, vnstock_service, shar
             
     return trinity_analysis
 
+def get_realtime_price_async(dnse_service, symbol, timeout=5.0):
+    """
+    Fetch real-time price from DNSE MQTT with timeout.
+    Returns dict or None.
+    """
+    if not dnse_service:
+        return None
+        
+    data_event = threading.Event()
+    received_data = {}
+    
+    def on_stock_data(payload):
+        # print(f"🔹 DEBUG: MQTT Data received for {symbol}")
+        received_data.update(payload)
+        data_event.set()
+        
+    # Subscribe and wait
+    dnse_service.get_realtime_price(symbol, on_stock_data)
+    
+    if data_event.wait(timeout=timeout):
+        return received_data
+    else:
+        print(f"⚠️ MQTT Timeout for {symbol}")
+        return None
+
 def format_stock_reply(data, shark_service=None, trinity_data=None):
     """
     Helper function to format stock data message.
@@ -317,38 +342,59 @@ def handle_stock_price(bot, message, dnse_service, shark_service=None, vnstock_s
             bot.reply_to(message, "⚠️ Mã cổ phiếu không hợp lệ.")
             return
 
-        msg_wait = bot.reply_to(message, f"⏳ Đang tải dữ liệu **{symbol}** từ vnstock...", parse_mode='Markdown')
+        msg_wait = bot.reply_to(message, f"⏳ Đang tải dữ liệu **{symbol}** (MQTT)...", parse_mode='Markdown')
         
-        # Use vnstock service if available
-        if vnstock_service:
-            data = vnstock_service.get_stock_info(symbol)
-            
-            if data:
-                # Check RSI Watchlist Trigger
-                if shark_service and data.get('rsi') is not None:
-                    added = shark_service.check_rsi_watchlist(
-                        symbol, 
-                        data.get('rsi'), 
-                        data.get('totalVolumeTraded', 0), 
-                        data.get('avg_vol_5d', 0)
-                    )
-                    
-                    if added:
-                        bot.send_message(message.chat.id, f"🔔 **{symbol}** đã được thêm vào Watchlist (RSI + Vol đột biến)!", parse_mode='Markdown')
-
-                # Unified Analysis Logic
-                trinity_analysis = get_enriched_trinity_analysis(
-                    symbol, trinity_service, vnstock_service, 
-                    shark_service, bot, message.chat.id
+        # 1. Fetch Real-time Data (MQTT) - Priority
+        mqtt_data = get_realtime_price_async(dnse_service, symbol)
+        
+        # 2. Enrich with Vnstock (History/Context)
+        enriched_data = {}
+        if mqtt_data:
+            enriched_data = mqtt_data
+            # Initialize vnstock helper if available to get extra info
+            if vnstock_service:
+                try:
+                    # We utilize vnstock just for Static/History info (Industry, AvgVol, RSI)
+                    # Implementation detail: vnstock_service.get_stock_info does full fetch,
+                    # but we can overwrite price with MQTT_data.
+                    # Or better: Add a specific enrichment method in vnstock_service.
+                    # For now, we reuse get_stock_info but prioritize MQTT fields.
+                    vn_data = vnstock_service.get_stock_info(symbol)
+                    if vn_data:
+                        # Merge: Keep MQTT price/vol, take Industry/AvgVol from Vnstock
+                        enriched_data['industry'] = vn_data.get('industry')
+                        enriched_data['avg_vol_5d'] = vn_data.get('avg_vol_5d')
+                        enriched_data['rsi'] = vn_data.get('rsi')
+                except:
+                    pass
+        elif vnstock_service:
+            # Fallback to pure Vnstock if MQTT fails
+            print(f"⚠️ MQTT failed for {symbol}, falling back to Vnstock HTTP.")
+            enriched_data = vnstock_service.get_stock_info(symbol)
+        
+        if enriched_data:
+            # Check RSI Watchlist (using enriched data)
+            if shark_service and enriched_data.get('rsi') is not None:
+                added = shark_service.check_rsi_watchlist(
+                    symbol, 
+                    enriched_data.get('rsi'), 
+                    enriched_data.get('totalVolumeTraded', 0), 
+                    enriched_data.get('avg_vol_5d', 0)
                 )
+                if added:
+                    bot.send_message(message.chat.id, f"🔔 **{symbol}** đã được thêm vào Watchlist (RSI + Vol đột biến)!", parse_mode='Markdown')
 
-                reply_msg = format_stock_reply(data, shark_service, trinity_analysis)
-                bot.delete_message(chat_id=message.chat.id, message_id=msg_wait.message_id)
-                bot.send_message(message.chat.id, reply_msg, parse_mode='Markdown')
-            else:
-                bot.edit_message_text(f"❌ Không tìm thấy mã **{symbol}**.", chat_id=message.chat.id, message_id=msg_wait.message_id, parse_mode='Markdown')
+            # Unified Analysis Logic
+            trinity_analysis = get_enriched_trinity_analysis(
+                symbol, trinity_service, vnstock_service, 
+                shark_service, bot, message.chat.id
+            )
+
+            reply_msg = format_stock_reply(enriched_data, shark_service, trinity_analysis)
+            bot.delete_message(chat_id=message.chat.id, message_id=msg_wait.message_id)
+            bot.send_message(message.chat.id, reply_msg, parse_mode='Markdown')
         else:
-             bot.edit_message_text("❌ Vnstock Service chưa được khởi tạo.", chat_id=message.chat.id, message_id=msg_wait.message_id)
+             bot.edit_message_text(f"❌ Không tìm thấy mã **{symbol}** (Kiểm tra lại kết nối/mã).", chat_id=message.chat.id, message_id=msg_wait.message_id, parse_mode='Markdown')
 
     except Exception as e:
         print(f"Stock Error: {e}")
@@ -375,59 +421,60 @@ def process_stock_search_step(bot, message, dnse_service=None, shark_service=Non
             bot.reply_to(message, "⚠️ Mã cổ phiếu không hợp lệ. Vui lòng thử lại.")
             return
 
-        msg_wait = bot.reply_to(message, f"⏳ Đang tải dữ liệu **{symbol}** từ vnstock...", parse_mode='Markdown')
+        msg_wait = bot.reply_to(message, f"⏳ Đang tải dữ liệu **{symbol}** (MQTT)...", parse_mode='Markdown')
         
-        # Use vnstock service if available, fallback to MQTT
-        if vnstock_service:
-            data = vnstock_service.get_stock_info(symbol)
-            
-            if data:
-                # Check RSI Watchlist Trigger
-                if shark_service and data.get('rsi') is not None:
-                    added = shark_service.check_rsi_watchlist(
-                        symbol, 
-                        data.get('rsi'), 
-                        data.get('totalVolumeTraded', 0), 
-                        data.get('avg_vol_5d', 0)
-                    )
-                    
-                    if added:
-                        bot.send_message(message.chat.id, f"b🔔 **{symbol}** đã được thêm vào Watchlist (RSI + Vol đột biến)!", parse_mode='Markdown')
+        # 1. Fetch Real-time Data (MQTT) - Priority
+        mqtt_data = get_realtime_price_async(dnse_service, symbol)
+        
+        # 2. Enrich with Vnstock (History/Context)
+        enriched_data = {}
+        if mqtt_data:
+            enriched_data = mqtt_data
+            # Initialize vnstock helper if available to get extra info
+            if vnstock_service:
+                try:
+                    vn_data = vnstock_service.get_stock_info(symbol)
+                    if vn_data:
+                        enriched_data['industry'] = vn_data.get('industry')
+                        enriched_data['avg_vol_5d'] = vn_data.get('avg_vol_5d')
+                        enriched_data['rsi'] = vn_data.get('rsi')
+                except:
+                    pass
+        elif vnstock_service:
+            # Fallback to pure Vnstock
+            enriched_data = vnstock_service.get_stock_info(symbol)
 
-                # Unified Analysis Logic
-                trinity_analysis = get_enriched_trinity_analysis(
-                    symbol, trinity_service, vnstock_service, 
-                    shark_service, bot, message.chat.id
+        if enriched_data:
+            # Check RSI Watchlist Trigger
+            if shark_service and enriched_data.get('rsi') is not None:
+                added = shark_service.check_rsi_watchlist(
+                    symbol, 
+                    enriched_data.get('rsi'), 
+                    enriched_data.get('totalVolumeTraded', 0), 
+                    enriched_data.get('avg_vol_5d', 0)
                 )
+                if added:
+                    bot.send_message(message.chat.id, f"b🔔 **{symbol}** đã được thêm vào Watchlist (RSI + Vol đột biến)!", parse_mode='Markdown')
 
-                reply_msg = format_stock_reply(data, shark_service, trinity_analysis)
-                bot.delete_message(chat_id=message.chat.id, message_id=msg_wait.message_id)
-                bot.send_message(message.chat.id, reply_msg, parse_mode='Markdown')
-            else:
-                bot.edit_message_text(f"❌ Không tìm thấy mã **{symbol}**.", chat_id=message.chat.id, message_id=msg_wait.message_id, parse_mode='Markdown')
+            # Unified Analysis Logic
+            trinity_analysis = get_enriched_trinity_analysis(
+                symbol, trinity_service, vnstock_service, 
+                shark_service, bot, message.chat.id
+            )
+
+            reply_msg = format_stock_reply(enriched_data, shark_service, trinity_analysis)
+            bot.delete_message(chat_id=message.chat.id, message_id=msg_wait.message_id)
+            bot.send_message(message.chat.id, reply_msg, parse_mode='Markdown')
         else:
-            # Fallback to MQTT (old method)
-            data_event = threading.Event()
-            received_data = {}
-            
-            def on_stock_data(payload):
-                received_data.update(payload)
-                data_event.set()
-                
-            dnse_service.get_realtime_price(symbol, on_stock_data)
-            
-            if data_event.wait(timeout=10.0):
-                reply_msg = format_stock_reply(received_data)
-                bot.delete_message(chat_id=message.chat.id, message_id=msg_wait.message_id)
-                bot.send_message(message.chat.id, reply_msg, parse_mode='Markdown')
-            else:
-                bot.edit_message_text(f"❌ Không tìm thấy mã **{symbol}** or Timeout.", chat_id=message.chat.id, message_id=msg_wait.message_id, parse_mode='Markdown')
+            bot.edit_message_text(f"❌ Không tìm thấy mã **{symbol}** or Timeout.", chat_id=message.chat.id, message_id=msg_wait.message_id, parse_mode='Markdown')
 
     except Exception as e:
         print(f"Search Step Error: {e}")
         bot.reply_to(message, "❌ Lỗi xử lý.")
 
 def handle_show_watchlist(bot, message, watchlist_service):
+    """
+    """
     try:
         from telebot import types
         
