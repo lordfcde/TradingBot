@@ -57,17 +57,63 @@ class TrinityAnalyzer:
                 return self._fallback_result(symbol, error="No Tech Data (calc error)")
 
             # ── Rating Logic ────────────────────────────────
-            trend_ok = summary['close'] > summary['ema50']       # Giá > EMA50
-            flow_ok  = summary['cmf'] > 0                        # Dòng tiền dương
-            rsi_ok   = summary['rsi'] > 50                       # Phe mua kiểm soát
+            # ── Rating Logic (Updated for Breakout/T+2.5) ──
+            
+            # Extract values
+            rsi = summary['rsi']
+            vol = summary['volume']
+            vol_avg = summary['vol_avg']
+            cmf = summary['cmf']
+            close = summary['close']
+            ema50 = summary['ema50']
+            chaikin = summary['chaikin']
+            prev_chaikin = summary.get('prev_chaikin', 0)
+            macd_hist = summary.get('macd_hist', 0)
 
-            if trend_ok and flow_ok and rsi_ok:
-                rating = "BUY"
+            score = 0
+            reasons = []
+
+            # 1. RSI Logic (Breakout Focus)
+            if rsi > 70:
+                if vol > vol_avg:
+                    score += 3
+                    reasons.append("RSI>70 + Vol (Breakout) ✅ (+3)")
+                else:
+                    score -= 3
+                    reasons.append("RSI>70 + Low Vol (Trap) ⚠️ (-3)")
+            elif 50 <= rsi <= 70:
+                score += 2
+                reasons.append("RSI 50-70 (Tốt) ✅ (+2)")
+
+            # 2. Other Criteria
+            if close > ema50:
+                score += 2
+                reasons.append("Giá > EMA50 ✅ (+2)")
+            
+            if cmf > 0:
+                score += 2
+                reasons.append("CMF > 0 ✅ (+2)")
+
+            if chaikin > prev_chaikin:
+                score += 1
+                reasons.append("Chaikin Tăng ✅ (+1)")
+
+            if macd_hist > 0:
+                score += 2
+                reasons.append("MACD Hist > 0 ✅ (+2)")
+
+            # 3. Rating Scale
+            if score >= 8:
+                rating = "MUA MẠNH 🚀"
+            elif score >= 6:
+                rating = "MUA THĂM DÒ 🟢"
             else:
-                rating = "WATCH"
+                rating = "THEO DÕI 🟡"
 
             return {
                 'rating':     rating,
+                'score':      score,       # Added score to result
+                'reasons':    reasons,     # Added reasons to result
                 'trend':      summary['trend'],
                 'cmf':        summary['cmf'],
                 'cmf_status': summary['cmf_status'],

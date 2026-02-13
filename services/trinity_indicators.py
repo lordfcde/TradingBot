@@ -72,9 +72,16 @@ class TrinityLite:
 
         # ── 3. VSA (Volume Spread Analysis) ─────────────────
         vol_sma = df['volume'].rolling(window=self.VOL_AVG_LEN).mean()
+        df['vol_avg'] = vol_sma  # Expose for analyzer
 
         df['vol_climax'] = df['volume'] > (self.VOL_CLIMAX_K * vol_sma)
         df['vol_dry']    = df['volume'] < (self.VOL_DRY_K * vol_sma)
+
+        # ── 3b. MACD (Added for Breakout Strategy) ──────────
+        # Returns: MACD_12_26_9, MACDh_12_26_9 (hist), MACDs_12_26_9 (signal)
+        macd = ta.macd(df['close'])
+        if macd is not None:
+             df = pd.concat([df, macd], axis=1)
 
         # Shakeout: price dipped below prior 10-bar low, but closed green + low vol
         prior_swing_low = df['low'].rolling(window=self.SHAKEOUT_LOOK).min().shift(1)
@@ -117,6 +124,7 @@ class TrinityLite:
                 return None
 
             last = analyzed.iloc[-1]
+            prev = analyzed.iloc[-2] if len(analyzed) > 1 else last # For chaikin comparison
 
             cmf_val = last.get('cmf', 0)
             if pd.notna(cmf_val) and cmf_val > 0.1:
@@ -149,10 +157,15 @@ class TrinityLite:
                 except (TypeError, ValueError):
                     return default
 
+            # Attempt to get MACD Hist
+            # pandas_ta default col: MACDh_12_26_9
+            macd_hist = safe_float(last.get('MACDh_12_26_9', 0))
+            
             return {
                 'signal': signal_name,
                 'cmf': safe_float(cmf_val),
                 'chaikin': safe_float(last.get('chaikin', 0)),
+                'prev_chaikin': safe_float(prev.get('chaikin', 0)), # Added for scoring
                 'rsi': safe_float(last.get('rsi', 0)),
                 'close': float(close),
                 'ema50': float(ema50),
@@ -165,6 +178,8 @@ class TrinityLite:
                 'trend': trend,
                 'cmf_status': cmf_status,
                 'volume': safe_float(last.get('volume', 0)),
+                'vol_avg': safe_float(last.get('vol_avg', 0)), # Added
+                'macd_hist': macd_hist, # Added
             }
 
         except Exception as e:
