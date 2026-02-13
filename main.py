@@ -5,7 +5,7 @@ import config
 import logging
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 
 # Services
@@ -150,12 +150,19 @@ class BotScheduler:
 
     def run_schedule(self):
         """Infinite Loop for Schedule Management"""
-        logger.info("⏳ Scheduler Started...")
+        logger.info("⏳ Scheduler Started (UTC+7 Mode)...")
         while True:
             try:
-                now = datetime.now()
-                tick = now.strftime("%H:%M")
-                weekday = now.weekday() # 0=Mon, 4=Fri
+                # FIX: Render runs on UTC. We must manually shift to UTC+7 (Vietnam Time)
+                # datetime.utcnow() is deprecated in 3.12 but works. 
+                # datetime.now(timezone.utc) is safer. But let's keep it simple.
+                
+                # Using simple offset logic to be robust
+                utc_now = datetime.utcnow()
+                vn_now = utc_now + timedelta(hours=7)
+                
+                tick = vn_now.strftime("%H:%M")
+                weekday = vn_now.weekday() # 0=Mon, 4=Fri
                 
                 # Weekend Check
                 if weekday > 4:
