@@ -38,6 +38,9 @@ try:
     bot = telebot.TeleBot(config.API_TOKEN)
     logger.info("✅ Bot initializing...")
     
+    # Suppress vnstock log spam
+    logging.getLogger("vnstock.core.utils.field.mapper").setLevel(logging.WARNING)
+    
     # Initialize Services
     dnse_service = DNSEService()
     gold_service = GoldService()
@@ -52,7 +55,7 @@ try:
     trinity_monitor.set_chat_id(shark_service.alert_chat_id)
     shark_service.set_trinity_monitor(trinity_monitor)
     
-    analyzer = TrinityAnalyzer()
+    analyzer = TrinityAnalyzer(vnstock_service)
     shark_service.set_analyzer(analyzer)
     
     # Register Streams
@@ -113,7 +116,7 @@ class BotScheduler:
         # But user said "báo lại từ đầu" -> clear 'alerted_symbols' logic.
         
         # Filter Watchlist (Liquidity check)
-        self.shark.watchlist_service.filter_by_liquidity(min_avg_volume=100000)
+        self.shark.watchlist_service.filter_by_liquidity(self.shark.vnstock_service, min_avg_volume=100000)
         
         self.current_state = "LUNCH"
 

@@ -19,7 +19,8 @@ class TrinityAnalyzer:
     Fetches 1H candles via vnstock, runs TrinityLite, returns a rating.
     """
 
-    def __init__(self):
+    def __init__(self, vnstock_service=None):
+        self.vnstock_service = vnstock_service
         self.engine = TrinityLite()
         self.timeframe = "1H"       # Hourly timeframe for T+2.5 strategy
         self.lookback_days = 30     # Need ~50 bars. 5 bars/day * 30 days = 150 bars. Safe.
@@ -140,18 +141,29 @@ class TrinityAnalyzer:
     def _fetch_data(self, symbol: str):
         """Fetch 15m OHLCV via vnstock."""
         try:
-            from vnstock import Vnstock
-            stock = Vnstock().stock(symbol=symbol, source='KBS')  # KBS has better 15m data quality
-
             end_date = datetime.now()
             start_date = end_date - timedelta(days=self.lookback_days)
 
-            df = stock.quote.history(
-                symbol=symbol,
-                start=start_date.strftime('%Y-%m-%d'),
-                end=end_date.strftime('%Y-%m-%d'),
-                interval=self.timeframe,
-            )
+            # Use Shared Service if available (Optimization)
+            if self.vnstock_service:
+                df = self.vnstock_service.get_history(
+                    symbol=symbol,
+                    start=start_date.strftime('%Y-%m-%d'),
+                    end=end_date.strftime('%Y-%m-%d'),
+                    interval='15m',
+                    source='KBS'
+                )
+            else:
+                # Fallback (Slow, for testing isolation)
+                from vnstock import Vnstock
+                stock = Vnstock().stock(symbol=symbol, source='KBS')
+                df = stock.quote.history(
+                    symbol=symbol,
+                    start=start_date.strftime('%Y-%m-%d'),
+                    end=end_date.strftime('%Y-%m-%d'),
+                    interval='15m'
+                )
+
 
             if df is None or df.empty:
                 return None

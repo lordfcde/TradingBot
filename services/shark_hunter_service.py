@@ -191,6 +191,24 @@ class SharkHunterService:
             total_vol = int(payload.get("totalVolumeTraded", 0) or payload.get("totalVol", 0))
             change_pc = float(payload.get("changedRatio", 0) or payload.get("changePc", 0))
             
+            # DEBUG: Log Raw Values for inspection
+            # if symbol in ['ITD', 'VSC']:
+            #     print(f"DEBUG {symbol}: Raw={raw_vol}, Vol={vol}, Price={price}")
+
+            # Latency Check
+            match_time_str = payload.get("time") # Format usually HH:mm:ss
+            latency_msg = ""
+            if match_time_str:
+                try:
+                    vn_now = datetime.now(timezone.utc) + timedelta(hours=7)
+                    curr_hm_s = vn_now.strftime("%H:%M:%S")
+                    # Simple comparison (ignoring date for speed)
+                    if match_time_str < curr_hm_s:
+                         time_diff = datetime.strptime(curr_hm_s, "%H:%M:%S") - datetime.strptime(match_time_str, "%H:%M:%S")
+                         # latency_msg = f"(Latency: {time_diff.seconds}s)"
+                except:
+                    pass
+
             # FILTER: Only allow 3-letter Stock Symbols (Removes Warrants/Derivatives)
             if len(symbol) > 3:
                 return
@@ -251,7 +269,7 @@ class SharkHunterService:
 
             # It is a SHARK order!
             # NEW LOGIC: Check if current volume > 120% of 5-day avg volume
-            print(f"🔍 WATCHLIST CHECK: {symbol} - Shark order detected (total_vol: {total_vol:,.0f})")
+            print(f"🔍 WATCHLIST CHECK: {symbol} - Shark order detected (total_vol: {total_vol:,.0f}) | RawVol: {raw_vol} {latency_msg}")
             
             # Check volume condition for watchlist
             if self.vnstock_service and total_vol > 0:

@@ -131,7 +131,7 @@ class WatchlistService:
         sorted_items.sort(key=lambda x: x['entry_time'], reverse=True)
         return sorted_items
 
-    def filter_by_liquidity(self, min_avg_volume=250000):
+    def filter_by_liquidity(self, vnstock_service, min_avg_volume=250000):
         """
         Filter watchlist by liquidity (5-day average volume).
         Remove symbols with avg volume < min_avg_volume.
@@ -141,7 +141,7 @@ class WatchlistService:
             print("📊 Watchlist empty - no filtering needed")
             return
         
-        from vnstock import Vnstock
+        from datetime import datetime, timedelta
         from datetime import datetime, timedelta
         
         symbols_to_remove = []
@@ -151,17 +151,16 @@ class WatchlistService:
         
         for symbol in list(data.keys()):
             try:
-                stock = Vnstock().stock(symbol=symbol, source='KBS')
-                
                 # Get last 10 days of data to calculate 5-day avg
                 end_date = datetime.now()
                 start_date = end_date - timedelta(days=10)
                 
-                df = stock.quote.history(
+                df = vnstock_service.get_history(
                     symbol=symbol,
                     start=start_date.strftime('%Y-%m-%d'),
                     end=end_date.strftime('%Y-%m-%d'),
-                    interval='1D'
+                    interval='1D',
+                    source='KBS'
                 )
                 
                 if df is not None and not df.empty and len(df) >= 5:
