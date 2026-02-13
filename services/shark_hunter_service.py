@@ -12,7 +12,7 @@ CONFIG_FILE = "scanner_config.json"
 STATS_FILE = "shark_stats.json"
 
 # Default Constants (Fallback)
-DEFAULT_MIN_VALUE = 1_000_000_000  # 1 Billion VND
+DEFAULT_MIN_VALUE = 50_000_000  # 50 Million VND (Aggressive test)
 DEFAULT_COOLDOWN = 60
 DEFAULT_START_TIME = "09:00"  # Market opens at 9:00 AM
 MAINTENANCE_INTERVAL = 60
@@ -147,7 +147,9 @@ class SharkHunterService:
     # CORE LOGIC
     # ==========================================
     def process_tick(self, payload):
+        """Process real-time tick data for Shark detection"""
         try:
+            # print(f"🔹 DEBUG: Tick received: {payload.get('symbol')}")  # Uncomment to debug stream
             # Check and clear cache during lunch break
             self._check_lunch_break()
             
@@ -186,10 +188,29 @@ class SharkHunterService:
             )
             # User Correction: Unit is already in shares/lots (No need to multiply by 100)
             vol = raw_vol
+            # Extract Data
+            try:
+                # DEBUG: Print FULL PAYLOAD to see keys
+                # print(f"🔹 RAW PAYLOAD: {payload}") 
+
+                price = float(payload.get("lastPrice", 0) or payload.get("matchPrice", 0) or payload.get("price", 0))
+                vol = float(payload.get("lastVol", 0) or payload.get("matchVol", 0) or payload.get("vol", 0) or payload.get("matchQuantity", 0))
+                
+                total_vol = float(payload.get("totalVolumeTraded", 0) or payload.get("accumulatedVol", 0) or 0)
+                change_pc = float(payload.get("changeRatio", 0) or payload.get("changePc", 0) or 0)
+            except ValueError:
+                # If conversion fails (e.g. empty string), skip
+                return
+
+            match_time_str = payload.get("time") # HH:mm:ss format often
+
+            # DEBUG: Print every tick value to see what's happening
+            # real_price logic check
+            real_price = price if price > 1000 else price * 1000
+            order_value = real_price * vol
             
-            price = float(payload.get("matchPrice", 0) or payload.get("lastPrice", 0))
-            total_vol = int(payload.get("totalVolumeTraded", 0) or payload.get("totalVol", 0))
-            change_pc = float(payload.get("changedRatio", 0) or payload.get("changePc", 0))
+            # if order_value > 100_000_000: # Only log > 100M to reduce spam but see "near misses"
+            # print(f"🔹 TICK: {symbol} | P: {price} | V: {vol} | Val: {order_value:,.0f} | Min: {self.min_value:,.0f} | Keys: {list(payload.keys())}")  
             
             # DEBUG: Log Raw Values for inspection
             # if symbol in ['ITD', 'VSC']:
