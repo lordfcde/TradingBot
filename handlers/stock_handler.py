@@ -49,7 +49,7 @@ def handle_gold_price(bot, message, gold_service):
         print(f"Lỗi Gold: {e}")
         bot.reply_to(message, "❌ Có lỗi xảy ra khi lấy dữ liệu.")
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ... (imports)
 
@@ -149,8 +149,8 @@ def format_stock_reply(data, shark_service=None, trinity_data=None):
     
     # Date
     # data might have 'time' or 'transactTime'
-    # Default to current time if missing
-    log_time = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    # Default to current time if missing -> Force to UTC+7 (Vietnam Time)
+    log_time = (datetime.utcnow() + timedelta(hours=7)).strftime("%d/%m/%Y %H:%M:%S")
     
     # Buy/Sell Surplus Removed as per request
     # Add Last Match Volume (User says Unit is 10, so x10)
