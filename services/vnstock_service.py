@@ -7,6 +7,7 @@ class VnstockService:
     def __init__(self):
         """Initialize vnstock service."""
         self.trading = Trading()
+        self.stock_source = Vnstock()  # Initialize once to avoid reloading mappings
         print("✅ vnstock Service initialized")
     
     def get_stock_info(self, symbol):
@@ -38,7 +39,8 @@ class VnstockService:
             rsi_val = None
             
             try:
-                stock_obj = Vnstock().stock(symbol=symbol, source='VCI')
+                # Use pre-initialized source
+                stock_obj = self.stock_source.stock(symbol=symbol, source='VCI')
                 
                 # Try to get company profile for industry
                 try:
