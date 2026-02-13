@@ -1,11 +1,7 @@
-"""
-Market Hours Utility
-Handles Vietnam stock market trading hours and session checks
-"""
-from datetime import datetime, time
+from datetime import datetime, time, timedelta, timezone
 
 class MarketHours:
-    """Vietnam stock market trading hours"""
+    """Vietnam stock market trading hours (UTC+7)"""
     
     # Trading sessions
     MORNING_START = time(9, 0)
@@ -18,10 +14,15 @@ class MarketHours:
     LUNCH_END = time(13, 0)
     
     @staticmethod
+    def now_vn():
+        """Get current Vietnam time (UTC+7)"""
+        return datetime.now(timezone.utc) + timedelta(hours=7)
+
+    @staticmethod
     def is_trading_hours(dt: datetime = None) -> bool:
         """Check if current time is within trading hours"""
         if dt is None:
-            dt = datetime.now()
+            dt = MarketHours.now_vn()
         
         current_time = dt.time()
         
@@ -43,7 +44,7 @@ class MarketHours:
     def is_lunch_break(dt: datetime = None) -> bool:
         """Check if current time is lunch break"""
         if dt is None:
-            dt = datetime.now()
+            dt = MarketHours.now_vn()
         
         current_time = dt.time()
         
@@ -62,7 +63,7 @@ class MarketHours:
     def get_session_name(dt: datetime = None) -> str:
         """Get current session name"""
         if dt is None:
-            dt = datetime.now()
+            dt = MarketHours.now_vn()
         
         if dt.weekday() >= 5:
             return "WEEKEND"

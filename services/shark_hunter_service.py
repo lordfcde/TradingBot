@@ -60,7 +60,7 @@ class SharkHunterService:
         self.summary_sent_today = False
         
         self.last_maintenance = time.time()
-        self.last_reset_date = datetime.now().strftime("%Y-%m-%d")
+        self.last_reset_date = (datetime.now(timezone.utc) + timedelta(hours=7)).strftime("%Y-%m-%d")
         self._load_stats()
         
         print(f"🦈 Shark Hunter Service Ready (Dict-Driven)")
@@ -160,7 +160,10 @@ class SharkHunterService:
 
             # Time Check
             # Time Check (Strict Trading Hours)
-            current_hm = datetime.now().strftime("%H:%M")
+            # FIX: Render runs on UTC, must convert to UTC+7
+            utc_now = datetime.now(timezone.utc)
+            vn_now = utc_now + timedelta(hours=7)
+            current_hm = vn_now.strftime("%H:%M")
             
             # 1. Start Time Check (09:00 default)
             if current_hm < self.start_time:
@@ -215,7 +218,7 @@ class SharkHunterService:
                         'change_pc': change_pc,
                         'price': real_price,
                         'total_vol': total_vol,  # Track total volume
-                        'last_update': datetime.now(),
+                        'last_update': datetime.now(timezone.utc) + timedelta(hours=7),
                         'alerted': False  # Track if we've alerted for this symbol today
                     }
                 else:
@@ -223,7 +226,7 @@ class SharkHunterService:
                     self.price_tracker[symbol]['change_pc'] = change_pc
                     self.price_tracker[symbol]['price'] = real_price
                     self.price_tracker[symbol]['total_vol'] = total_vol
-                    self.price_tracker[symbol]['last_update'] = datetime.now()
+                    self.price_tracker[symbol]['last_update'] = datetime.now(timezone.utc) + timedelta(hours=7)
                 
                 # Check for HIGH VOLATILITY and send alert
                 # Only alert if volume >= 200k to avoid low liquidity stocks
@@ -347,7 +350,9 @@ class SharkHunterService:
         self.shark_stats[symbol]['last_price_change'] = change_pc
 
         # Add to History
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        # FIX: VN Time
+        vn_now = datetime.now(timezone.utc) + timedelta(hours=7)
+        timestamp = vn_now.strftime("%H:%M:%S")
         self.trade_history.append({
             'time': timestamp,
             'symbol': symbol,
@@ -417,7 +422,8 @@ class SharkHunterService:
         )[:5]
         
         msg = "🦈 **THỐNG KÊ CÁ MẬP HÔM NAY** 🦈\n"
-        msg += f"🕒 Cập nhật: {datetime.now().strftime('%H:%M:%S')}\n"
+        vn_now = datetime.now(timezone.utc) + timedelta(hours=7)
+        msg += f"🕒 Cập nhật: {vn_now.strftime('%H:%M:%S')}\n"
         msg += "=============================\n"
         
         if top_buyers:
@@ -456,7 +462,8 @@ class SharkHunterService:
 
         icon = "📈" if change_pc >= 0 else "📉"
         val_billion = order_value / 1_000_000_000
-        time_str = datetime.now().strftime("%H:%M:%S")
+        vn_now = datetime.now(timezone.utc) + timedelta(hours=7)
+        time_str = vn_now.strftime("%H:%M:%S")
         
         # Compact horizontal format with pipe separators
         msg = (
@@ -483,7 +490,8 @@ class SharkHunterService:
             
             # Filter for entries added today
             from datetime import datetime
-            today = datetime.now().strftime("%Y-%m-%d")
+            vn_now = datetime.now(timezone.utc) + timedelta(hours=7)
+            today = vn_now.strftime("%Y-%m-%d")
             today_symbols = []
             
             for entry in watchlist:
@@ -498,7 +506,7 @@ class SharkHunterService:
                 
                 # Save to history file
                 history_file = "watchlist_history.txt"
-                log_line = f"{datetime.now().strftime('%Y-%m-%d %H:%M')} | {len(today_symbols)} mã | {symbols_text}\n"
+                log_line = f"{vn_now.strftime('%Y-%m-%d %H:%M')} | {len(today_symbols)} mã | {symbols_text}\n"
                 
                 try:
                     with open(history_file, 'a', encoding='utf-8') as f:
@@ -514,7 +522,7 @@ class SharkHunterService:
                     f"{symbols_text}\n"
                     f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
                     f"💎 Tất cả đều có rating <b>BUY</b> (Mua mạnh)\n"
-                    f"⏰ Tóm tắt cuối phiên {datetime.now().strftime('%d/%m/%Y')}\n"
+                    f"⏰ Tóm tắt cuối phiên {vn_now.strftime('%d/%m/%Y')}\n"
                     f"💾 Đã lưu vào file lịch sử"
                 )
                 self.bot.send_message(self.alert_chat_id, msg, parse_mode='HTML')
@@ -631,7 +639,8 @@ class SharkHunterService:
             else:
                 rating_text = "👀 THEO DÕI"
 
-            time_str = datetime.now().strftime("%H:%M:%S")
+            vn_now = datetime.now(timezone.utc) + timedelta(hours=7)
+            time_str = vn_now.strftime("%H:%M:%S")
             cooldown_min = self.cooldown // 60 if self.cooldown >= 60 else 1
 
             # Detailed multi-line format for filtered signals
@@ -740,7 +749,8 @@ class SharkHunterService:
                 self._save_stats()
                 
                 # Daily Reset
-                today = datetime.now().strftime("%Y-%m-%d")
+                vn_now = datetime.now(timezone.utc) + timedelta(hours=7)
+                today = vn_now.strftime("%Y-%m-%d")
                 if today != self.last_reset_date:
                     self.shark_stats = {}
                     self.alert_history = {}
@@ -755,8 +765,9 @@ class SharkHunterService:
         for k in expired:
             del self.alert_history[k]
             
+            
         # Daily Reset (08:30)
-        dt_now = datetime.now()
+        dt_now = datetime.now(timezone.utc) + timedelta(hours=7) # FIX: Use VN Time
         today_str = dt_now.strftime("%Y-%m-%d")
         is_reset_time = (dt_now.hour == 8 and dt_now.minute >= 30) or (dt_now.hour > 8)
 
@@ -789,7 +800,8 @@ class SharkHunterService:
         try:
             path = os.path.join(os.path.dirname(os.path.dirname(__file__)), STATS_FILE)
             with open(path, 'w') as f:
-                json.dump({"date": datetime.now().strftime("%Y-%m-%d"), "stats": self.shark_stats}, f)
+                vn_now = datetime.now(timezone.utc) + timedelta(hours=7)
+                json.dump({"date": vn_now.strftime("%Y-%m-%d"), "stats": self.shark_stats}, f)
         except: pass
 
     def _load_stats(self):
@@ -798,7 +810,8 @@ class SharkHunterService:
             if os.path.exists(path):
                 with open(path, 'r') as f:
                     data = json.load(f)
-                    if data.get('date') == datetime.now().strftime("%Y-%m-%d"):
+                    vn_now = datetime.now(timezone.utc) + timedelta(hours=7)
+                    if data.get('date') == vn_now.strftime("%Y-%m-%d"):
                         self.shark_stats = data.get('stats', {})
         except: pass
 
