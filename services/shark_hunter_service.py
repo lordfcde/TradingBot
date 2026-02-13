@@ -12,7 +12,7 @@ CONFIG_FILE = "scanner_config.json"
 STATS_FILE = "shark_stats.json"
 
 # Default Constants (Fallback)
-DEFAULT_MIN_VALUE = 50_000_000  # 50 Million VND (Aggressive test)
+DEFAULT_MIN_VALUE = 1_000_000_000  # 1 Billion VND (Production)
 DEFAULT_COOLDOWN = 60
 DEFAULT_START_TIME = "09:00"  # Market opens at 9:00 AM
 MAINTENANCE_INTERVAL = 60
@@ -33,8 +33,14 @@ class SharkHunterService:
         self.config = self._load_dictionary()
         # Value Threshold: JSON > Env > Default
         self.min_value = self.config.get("settings", {}).get("min_shark_value")
+        
+        # DEBUG: Trace source
+        env_val = os.getenv("SHARK_MIN_VALUE")
+        print(f"DEBUG: Config Val: {self.min_value}")
+        print(f"DEBUG: Env Val: {env_val}")
+        print(f"DEBUG: Default Val: {DEFAULT_MIN_VALUE}")
+        
         if not self.min_value:
-            env_val = os.getenv("SHARK_MIN_VALUE")
             self.min_value = float(env_val) if env_val else DEFAULT_MIN_VALUE
 
         # Cooldown: JSON > Default
@@ -284,8 +290,12 @@ class SharkHunterService:
                         self._send_volatility_alert(symbol, change_pc, real_price, total_vol, direction, icon)
 
 
+
+            # DEBUG THRESHOLD
+            print(f"DEBUG CHECK: {symbol} Val={order_value:,.0f} Min={self.min_value:,.0f} Skip={order_value < self.min_value}")
             if order_value < self.min_value:
                 # User Requirement: 1 order must be > min_value. Do not accumulate small orders.
+                print(f"  -> Skipped {symbol} (Value < Min)")
                 return
 
             # It is a SHARK order!
