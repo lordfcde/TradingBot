@@ -1,6 +1,6 @@
 import time
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from services.trinity_indicators import TrinityLite
 
 
@@ -193,7 +193,9 @@ class TrinitySignalMonitor:
         while self.is_monitoring:
             try:
                 if not self._is_trading_hours():
-                    print(f"💤 Market Closed. Trinity sleeping... (Time: {datetime.now().strftime('%H:%M')})")
+                    utc_now = datetime.now(timezone.utc)
+                    vn_now = utc_now + timedelta(hours=7)
+                    print(f"💤 Market Closed. Trinity sleeping... (VN Time: {vn_now.strftime('%H:%M')})")
                     time.sleep(300)
                     continue
 
@@ -311,7 +313,11 @@ class TrinitySignalMonitor:
             return None
 
     def _is_trading_hours(self):
-        """Check if current time is within 09:00 - 15:15"""
-        now = datetime.now()
-        current_hm = now.strftime("%H:%M")
-        return "09:00" <= current_hm <= "15:15" and now.weekday() < 5
+        """Check if current time (VN UTC+7) is within 09:00 - 15:15"""
+        # Fix for Render: Use UTC time explicitly and shift to UTC+7
+        utc_now = datetime.now(timezone.utc)
+        vn_now = utc_now + timedelta(hours=7)
+        
+        current_hm = vn_now.strftime("%H:%M")
+        # Trading hours: 09:00 - 15:15, Mon-Fri (0-4)
+        return "09:00" <= current_hm <= "15:15" and vn_now.weekday() < 5
