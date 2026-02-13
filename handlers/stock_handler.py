@@ -145,7 +145,8 @@ def format_stock_reply(data, shark_service=None, trinity_data=None):
     # We assume API gives it. If 0, we show 0.
     
     vol_str = str(data.get("totalVolumeTraded", "0"))
-    total_vol = int(vol_str) if vol_str.isdigit() else 0
+    raw_total_vol = int(vol_str) if vol_str.isdigit() else 0
+    total_vol = raw_total_vol * 10  # Fix: Multiply by 10 to match real volume
     
     # Date
     # data might have 'time' or 'transactTime'

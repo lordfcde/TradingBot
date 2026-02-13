@@ -35,9 +35,11 @@ class WatchlistService:
         symbol = symbol.upper()
         
         # entry_time as timestamp
+        # Fix: Use UTC+7 for display
+        vn_time = datetime.now(timezone.utc) + timedelta(hours=7)
         data[symbol] = {
             "entry_time": time.time(),
-            "display_time": datetime.now().strftime("%H:%M %d/%m")
+            "display_time": vn_time.strftime("%H:%M %d/%m")
         }
         
         self._save_data(data)
