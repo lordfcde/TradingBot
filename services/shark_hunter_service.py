@@ -40,6 +40,8 @@ class SharkHunterService:
         print(f"DEBUG: Env Val: {env_val}")
         print(f"DEBUG: Default Val: {DEFAULT_MIN_VALUE}")
         
+
+
         if not self.min_value:
             self.min_value = float(env_val) if env_val else DEFAULT_MIN_VALUE
 
@@ -77,6 +79,15 @@ class SharkHunterService:
         
         # TEST: FOX Monitoring
         self.fox_test_count = 0
+        
+        # DEBUG: Notify Telegram on Startup to prove Local Version is running
+        try:
+            if self.bot and self.alert_chat_id:
+               timestamp = datetime.now(timezone.utc).strftime('%H:%M:%S')
+               startup_msg = f"🦈 Local Bot RESTARTED at {timestamp}.\n✅ Threshold: {self.min_value/1_000_000_000:,.1f} Billion VND\n(Alerts < 1B are from old Cloud version)"
+               self.bot.send_message(self.alert_chat_id, startup_msg)
+        except Exception as e:
+            print(f"⚠️ Could not send startup msg: {e}")
         
     def set_trinity_monitor(self, monitor):
         """Inject Trinity Monitor dependency"""
@@ -291,11 +302,11 @@ class SharkHunterService:
 
 
 
-            # DEBUG THRESHOLD
-            print(f"DEBUG CHECK: {symbol} Val={order_value:,.0f} Min={self.min_value:,.0f} Skip={order_value < self.min_value}")
+            # DEBUG THRESHOLD (Commented out for production)
+            # print(f"DEBUG CHECK: {symbol} Val={order_value:,.0f} Min={self.min_value:,.0f} Skip={order_value < self.min_value}")
             if order_value < self.min_value:
                 # User Requirement: 1 order must be > min_value. Do not accumulate small orders.
-                print(f"  -> Skipped {symbol} (Value < Min)")
+                # print(f"  -> Skipped {symbol} (Value < Min)")
                 return
 
             # It is a SHARK order!
