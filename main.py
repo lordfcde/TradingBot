@@ -111,9 +111,8 @@ class BotScheduler:
         # 3. Clear Caches for Afternoon Fresh Start
         logger.info("🧹 Clearing Alert History (Session Reset)...")
         self.shark.alert_history.clear() 
-        self.shark.shark_stats.clear() # Optional: keep stats or clear? User said "báo lại từ đầu" implies alerts reset.
-        # usually we clear alert_history (cooldowns) but keep stats (total value). 
-        # But user said "báo lại từ đầu" -> clear 'alerted_symbols' logic.
+        self.shark.shark_stats.clear() # Alerted symbols cleared.
+        self.trinity.clear_history()   # Clear Trinity alert history too.
         
         # Filter Watchlist (Liquidity check)
         self.shark.watchlist_service.filter_by_liquidity(self.shark.vnstock_service, min_avg_volume=100000)

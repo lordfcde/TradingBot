@@ -34,6 +34,11 @@ class TrinitySignalMonitor:
         self.chat_id = None
         self.is_monitoring = False
         self.monitor_thread = None
+        
+    def clear_history(self):
+        """Clear alert history to allow re-alerting (e.g. for afternoon session)"""
+        self.alert_history.clear()
+        print("🧹 Trinity alert history cleared.")
 
         print("✅ Trinity Signal Monitor initialized (Fast & Furious, 30m)")
 
