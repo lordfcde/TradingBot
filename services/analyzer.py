@@ -348,7 +348,7 @@ class TrinityAnalyzer:
                     symbol=symbol,
                     start=start_date.strftime('%Y-%m-%d'),
                     end=end_date.strftime('%Y-%m-%d'),
-                    interval='15m',
+                    interval=timeframe, # Use the new timeframe argument
                     source='KBS'
                 )
             else:
