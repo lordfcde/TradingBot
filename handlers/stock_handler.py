@@ -139,7 +139,14 @@ def format_stock_reply(data, shark_service=None, trinity_data=None):
     
     vol_str = str(data.get("totalVolumeTraded", "0"))
     raw_total_vol = int(vol_str) if vol_str.isdigit() else 0
-    total_vol = raw_total_vol * 10  # Fix: Multiply by 10
+    
+    # Fix: Only multiply by 10 for DNSE/MQTT data (if needed). Vnstock is already exact.
+    # If source is explicitly VNSTOCK, do not multiply.
+    if data.get('source') == 'VNSTOCK':
+        total_vol = raw_total_vol
+    else:
+        # Assumption: MQTT/DNSE data might need x10 (based on previous fixes)
+        total_vol = raw_total_vol * 10
     
     # Date
     log_time = (datetime.now(timezone.utc) + timedelta(hours=7)).strftime("%H:%M %d/%m")

@@ -90,6 +90,7 @@ class VnstockService:
             
             # Format response to match expected format
             return {
+                'source': 'VNSTOCK',
                 'symbol': symbol,
                 'matchPrice': float(stock_data.get('close_price', 0)),
                 'changedRatio': float(stock_data.get('percent_change', 0)),
