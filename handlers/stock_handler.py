@@ -142,7 +142,7 @@ def format_stock_reply(data, shark_service=None, trinity_data=None):
     total_vol = raw_total_vol * 10  # Fix: Multiply by 10
     
     # Date
-    log_time = (datetime.utcnow() + timedelta(hours=7)).strftime("%H:%M %d/%m")
+    log_time = (datetime.now(timezone.utc) + timedelta(hours=7)).strftime("%H:%M %d/%m")
     
     # Icons
     if change_pc > 0: trend_icon = "📈"

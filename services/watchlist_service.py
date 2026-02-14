@@ -84,9 +84,12 @@ class WatchlistService:
         self._save_data(data)
 
     def get_active_watchlist(self):
-        """
-        Returns list of valid symbols. Cleans up expired ones.
-        """
+        """Get watchlist items that are valid for today"""
+        # Fix: Use UTC+7
+        vn_time = datetime.now(timezone.utc) + timedelta(hours=7)
+        today_str = vn_time.strftime("%Y-%m-%d")
+        
+        active_items = []
         data = self._load_data()
         now = time.time()
         expiry_seconds = EXPIRY_HOURS * 3600

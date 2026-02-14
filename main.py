@@ -274,7 +274,7 @@ if __name__ == "__main__":
         from config import SHARK_MIN_VALUE, ADMIN_CHAT_ID
         startup_msg = (
             f"🤖 **TRINITY MASTER AI ĐÃ KÍCH HOẠT!** 🚀\n"
-            f"🕒 Khởi động lúc: `{datetime.now().strftime('%H:%M:%S')}`\n"
+            f"🕒 Khởi động lúc: `{(datetime.now(timezone.utc) + timedelta(hours=7)).strftime('%H:%M:%S')}` (VN Time)\n"
             f"✅ Hệ thống sẵn sàng phục vụ.\n"
             f"-----------------------------\n"
             f"📊 Threshold: {SHARK_MIN_VALUE/1e9} Tỷ VND"

@@ -151,7 +151,11 @@ class TrinitySignalMonitor:
         else:
             rsi_label = f"⚪ {rsi:.1f} YẾU"
 
+        vn_now = datetime.now(timezone.utc) + timedelta(hours=7)
         msg = (
+            f"🔮 **TRINITY SYSTEM REPORT**\n"
+            f"⏰ **Thời gian:** {vn_now.strftime('%H:%M %d/%m/%Y')}\n"
+            f"---------------------------------\n"
             f"⚡ **TÍN HIỆU {signal_type} - {symbol} (30m)**\n\n"
             f"📊 **Dashboard:**\n"
             f"• Xu hướng: {trend}\n"
@@ -159,7 +163,6 @@ class TrinitySignalMonitor:
             f"• Chaikin Osc: {chaikin:+,.0f}\n"
             f"• RSI(14): {rsi_label}\n"
             f"• Kích nổ: {trigger_label}\n\n"
-            f"⏰ **Thời gian:** {datetime.now().strftime('%H:%M %d/%m/%Y')}\n"
             f"💰 **Giá:** {close:,.0f}\n\n"
             f"✅ **GỢI Ý:** {signal_type}"
         )
@@ -197,10 +200,14 @@ class TrinitySignalMonitor:
 
         while self.is_monitoring:
             try:
-                if not self._is_trading_hours():
-                    utc_now = datetime.now(timezone.utc)
-                    vn_now = utc_now + timedelta(hours=7)
-                    print(f"💤 Market Closed. Trinity sleeping... (VN Time: {vn_now.strftime('%H:%M')})")
+                # Check Market Hours (UTC+7)
+                utc_now = datetime.now(timezone.utc)
+                vn_now = utc_now + timedelta(hours=7)
+                
+                # Market Hours: 9:15 - 14:45 (Example) - Relaxed allowed for testing
+                if not (9 <= vn_now.hour <= 14):
+                    if vn_now.minute % 30 == 0: # Log only every 30 mins to avoid spam
+                         print(f"😴 Market Closed (VN Time: {vn_now.strftime('%H:%M')}). Sleeping...")
                     time.sleep(300)
                     continue
 
