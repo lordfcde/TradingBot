@@ -49,7 +49,7 @@ def handle_gold_price(bot, message, gold_service):
         print(f"Lỗi Gold: {e}")
         bot.reply_to(message, "❌ Có lỗi xảy ra khi lấy dữ liệu.")
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # ... (imports)
 
