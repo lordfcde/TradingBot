@@ -83,8 +83,8 @@ class SharkHunterService:
         # DEBUG: Notify Telegram on Startup to prove Local Version is running
         try:
             if self.bot and self.alert_chat_id:
-               timestamp = datetime.now(timezone.utc).strftime('%H:%M:%S')
-               startup_msg = f"🦈 Local Bot RESTARTED at {timestamp}.\n✅ Threshold: {self.min_value/1_000_000_000:,.1f} Billion VND\n(Alerts < 1B are from old Cloud version)"
+               timestamp = (datetime.now(timezone.utc) + timedelta(hours=7)).strftime('%H:%M:%S')
+               startup_msg = f"🦈 Local Bot RESTARTED at {timestamp} (VN Time).\n✅ Threshold: {self.min_value/1_000_000_000:,.1f} Billion VND\n(Alerts < 1B are from old Cloud version)"
                self.bot.send_message(self.alert_chat_id, startup_msg)
         except Exception as e:
             print(f"⚠️ Could not send startup msg: {e}")
