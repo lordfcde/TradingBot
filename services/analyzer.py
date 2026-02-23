@@ -307,20 +307,27 @@ class TrinityAnalyzer:
             change = shark_payload.get('change_pc', 0)
             change_icon = "📈" if change >= 0 else "📉"
             
-            # Format
-            msg = (
-                f"🚀 **PHÁT HIỆN ĐIỂM NỔ: #{symbol}**\n"
-                f"⏰ {time_str}\n\n"
-                f"✅ **LÝ DO KÍCH HOẠT:**\n"
-                f"• Giá: `{price:,.0f}` ({change:+.2f}%)\n"
-                f"• Vol: Đột biến `{vol_ratio:.1f}x` trung bình.\n"
-                f"• Trend: ADX `{adx:.1f}` ({'MẠNH TĂNG 🔥' if is_bullish else 'YẾU 🟡'})\n\n"
-                f"🛡️ **CHECK T+2.5:**\n"
-                f"• VN-INDEX: {market['status']} ({market['current']:.1f})\n"
-                f"• Dư địa: RSI `{rsi:.1f}` (An toàn)\n\n"
-                f"👉 **KHUYẾN NGHỊ:**\n"
-                f"**{rating}**"
-            )
+            # Lọc theo cường độ tín hiệu để tối ưu UI Telegram
+            is_strong_signal = any(word in rating.upper() for word in ['MẠNH', 'DIAMOND', 'NỔ'])
+            
+            if is_strong_signal:
+                msg = (
+                    f"🚀 **PHÁT HIỆN ĐIỂM NỔ: #{symbol}**\n"
+                    f"⏰ {time_str}\n\n"
+                    f"✅ **LÝ DO KÍCH HOẠT:**\n"
+                    f"• Giá: `{price:,.0f}` ({change:+.2f}%)\n"
+                    f"• Vol: Đột biến `{vol_ratio:.1f}x` TB.\n"
+                    f"• Trend: ADX `{adx:.1f}` ({'MẠNH TĂNG 🔥' if is_bullish else 'YẾU 🟡'})\n\n"
+                    f"🛡️ **CHECK T+2.5:**\n"
+                    f"• VN-INDEX: {market['status']} ({market['current']:.1f})\n"
+                    f"• Dư địa: RSI `{rsi:.1f}` (An toàn)\n\n"
+                    f"👉 **KHUYẾN NGHỊ:**\n"
+                    f"**{rating}**"
+                )
+            else:
+                # Tín hiệu Mua thường (MUA GIA TĂNG, MUA THĂM DÒ) -> Rút gọn 1 dòng
+                val_billion = shark_payload.get('order_value', 0) / 1_000_000_000
+                msg = f"🟢 **{rating}**: #{symbol} | 💰 {val_billion:.1f}T | 💵 {price:,.0f} ({change:+.2f}%) | ADX: {adx:.1f} | 🕐 {time_str}"
 
             return {
                 'approved': True,

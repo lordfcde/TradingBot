@@ -636,25 +636,9 @@ class SharkHunterService:
                 self.watchlist_service.add_enriched(symbol, shark_payload, result['analysis'])
                 
             else:
-                # REJECTED by Judge -> Send RAW SHARK STREAM (Sensitivity Test)
-                # User request: "muốn một luồng... chuyên nhận lệnh cá mập... kiểm tra độ nhạy"
-                # Logic: If order > 1B (which it is to get here), send Raw Alert with Warning.
-                
-                print(f"⛔ {symbol} REJECTED by Judge: {result['reason']}")
-                
-                if self.alert_chat_id:
-                    # Construct Raw Message
-                    val_billion = order_value / 1_000_000_000
-                    side_text = "MUA" if side == "Buy" else "BÁN"
-                    icon = "🟢" if side == "Buy" else "🔴"
-                    
-                    raw_msg = (
-                        f"🦈 **SHARK BITE (RAW): #{symbol}**\n"
-                        f"{icon} **{side_text} {val_billion:.1f} Tỷ** | Giá: `{price:,.0f}` ({change_pc:+.2f}%)\n"
-                        f"⚠️ *Judge Reject: {result['reason']}*"
-                    )
-                    self.bot.send_message(self.alert_chat_id, raw_msg, parse_mode='Markdown')
-                    print(f"🦈 RAW ALERT SENT: {symbol}")
+                # REJECTED by Judge -> Tắt thông báo rác lên Telegram theo yêu cầu
+                # Chỉ lọc âm thầm và không gửi Raw Alert
+                print(f"⛔ {symbol} REJECTED by Judge: {result['reason']} (Silent Mode)")
 
         except Exception as e:
             print(f"❌ Hybrid Analysis Error for {symbol}: {e}")
