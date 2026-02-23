@@ -284,6 +284,6 @@ if __name__ == "__main__":
         except Exception as e:
             logger.error(f"⚠️ Could not send startup msg: {e}")
         
-        bot.polling(none_stop=True)
+        bot.infinity_polling(timeout=10, long_polling_timeout=5)
     except Exception as e:
         logger.error(f"❌ Main Loop Error: {e}")
