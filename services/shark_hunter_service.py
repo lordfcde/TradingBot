@@ -255,7 +255,7 @@ class SharkHunterService:
             # Note: Volume from DNSE is likely shares (based on PVS example 500 vol = 21M val)
             # Reverting x10 multiplier to fix inflated values
             real_price = price if price > 1000 else price * 1000
-            order_value = real_price * vol
+            order_value = real_price * vol * 10  # BUGFIX: DNSE matchQuantity represents "mức đặt 10 cổ phiếu", need * 10
 
             # Extract Side (1=Buy, 2=Sell) - Stock Info doesn't have this field
             side_code = payload.get("side")
