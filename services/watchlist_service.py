@@ -1,7 +1,7 @@
 import json
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 WATCHLIST_FILE = "watchlist.json"
 EXPIRY_HOURS = 72

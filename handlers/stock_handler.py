@@ -626,7 +626,8 @@ def show_today_buy_signals(bot, call, watchlist_service):
             entry_time = info.get('entry_time', 0)
             entry_date = datetime.fromtimestamp(entry_time).strftime("%Y-%m-%d")
             
-            if entry_date == today and info.get('trinity', {}).get('rating') == 'BUY':
+            rating = info.get('trinity', {}).get('rating', '').upper()
+            if entry_date == today and ('BUY' in rating or 'MUA' in rating):
                 today_symbols.append(symbol)
         
         if not today_symbols:
