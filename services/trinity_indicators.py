@@ -65,18 +65,18 @@ class TrinityLite:
              df['adx'] = df[f'ADX_{self.ADX_LENGTH}']
              df['dmp'] = df[f'DMP_{self.ADX_LENGTH}']
              df['dmn'] = df[f'DMN_{self.ADX_LENGTH}']
-         # ── 2b. Supertrend ──────────────────────────────────
-         try:
-             st_df = ta.supertrend(df['high'], df['low'], df['close'], length=10, multiplier=3)
-             if st_df is not None and not st_df.empty:
-                 df = pd.concat([df, st_df], axis=1)
-                 for col in st_df.columns:
-                     if col.startswith('SUPERTd_'):
-                         df['supertrend_dir'] = st_df[col]
-                     elif col.startswith('SUPERT_'):
-                         df['supertrend'] = st_df[col]
-         except Exception as e:
-             pass
+        # ── 2b. Supertrend ──────────────────────────────────
+        try:
+            st_df = ta.supertrend(df['high'], df['low'], df['close'], length=10, multiplier=3)
+            if st_df is not None and not st_df.empty:
+                df = pd.concat([df, st_df], axis=1)
+                for col in st_df.columns:
+                    if col.startswith('SUPERTd_'):
+                        df['supertrend_dir'] = st_df[col]
+                    elif col.startswith('SUPERT_'):
+                        df['supertrend'] = st_df[col]
+        except Exception as e:
+            pass
         # ── 3. VSA (Volume Spread Analysis) ─────────────────
         vol_sma = df['volume'].rolling(window=self.VOL_AVG_LEN).mean()
         df['vol_avg'] = vol_sma
