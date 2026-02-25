@@ -529,52 +529,73 @@ class SharkHunterService:
             print(f"❌ SEND ERROR: {e}")
 
     def _send_daily_summary(self):
-        """Send daily watchlist summary at end of trading day (15:15)"""
+        """Send a rich post-market report at 15:15 with top sharks + buy signals"""
         if not self.alert_chat_id:
             return
-        
+
         try:
             vn_now = datetime.now(timezone.utc) + timedelta(hours=7)
             today = vn_now.strftime("%Y-%m-%d")
             today_display = vn_now.strftime("%d/%m")
+            date_label = vn_now.strftime("%d/%m/%Y")
 
-            # Query TOP 20 mã có nhiều tín hiệu nhất hôm nay từ DB
-            query = """
-                SELECT symbol, signal_count
+            # ── Section 1: Top 5 mã cá mập nhiều lệnh nhất ──────────
+            top_sharks = sorted(
+                [(sym, d) for sym, d in self.shark_stats.items() if d.get('total_buy_val', 0) > 0],
+                key=lambda x: x[1].get('total_buy_val', 0),
+                reverse=True
+            )[:5]
+
+            shark_lines = []
+            medals = ["🥇", "🥈", "🥉", "4.", "5."]
+            for i, (sym, d) in enumerate(top_sharks):
+                val_b = d['total_buy_val'] / 1_000_000_000
+                cnt   = d.get('count', 0)
+                shark_lines.append(f"{medals[i]} <b>#{sym}</b>: {val_b:.1f} Tỷ ({cnt} lệnh)")
+
+            shark_block = "\n".join(shark_lines) if shark_lines else "_(Không có dữ liệu)_"
+
+            # ── Section 2: Danh sách mã BUY khuyến nghị hôm nay ─────
+            buy_query = """
+                SELECT symbol, signal_count,
+                       CAST(COALESCE(trinity_data->>'adx', '0') AS FLOAT) as adx
                 FROM watchlist
                 WHERE RIGHT(display_time, 5) = %s
-                ORDER BY signal_count DESC, entry_time DESC
+                ORDER BY signal_count DESC, adx DESC
                 LIMIT 20
             """
-            rows = DatabaseService.execute_query(query, (today_display,), fetch=True)
-            
-            if rows:
-                today_symbols = [row['symbol'] for row in rows]
-                symbols_text = " | ".join([f"#{sym}" for sym in today_symbols])
-                
-                # Save top 20 vào watchlist_history
-                for sym in today_symbols:
-                    ins_q = "INSERT INTO watchlist_history (date, symbol) VALUES (%s, %s) ON CONFLICT (date, symbol) DO NOTHING"
-                    DatabaseService.execute_query(ins_q, (today, sym))
-                print(f"💾 Saved top {len(today_symbols)} symbols to history")
-                
-                # Gửi Telegram
-                msg = (
-                    f"📊 <b>TOP WATCHLIST HÔM NAY ({len(today_symbols)} mã)</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"{symbols_text}\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🔥 Đây là Top 20 mã có nhiều tín hiệu nhất hôm nay\n"
-                    f"⏰ Tóm tắt cuối phiên {vn_now.strftime('%d/%m/%Y')}\n"
-                    f"💾 Đã lưu vào lịch sử database"
-                )
-                self.bot.send_message(self.alert_chat_id, msg, parse_mode='HTML')
-                print(f"📊 Daily summary sent: {len(today_symbols)} symbols")
-            else:
-                print(f"📊 No watchlist entries today - skipping summary")
-                
+            buy_rows = DatabaseService.execute_query(buy_query, (today_display,), fetch=True)
+
+            buy_lines = []
+            if buy_rows:
+                for row in buy_rows:
+                    count_str = f" 🔥×{row['signal_count']}" if row['signal_count'] > 1 else ""
+                    buy_lines.append(f"• <b>#{row['symbol']}</b>{count_str}")
+                # Save top 20 to history
+                for row in buy_rows:
+                    q = "INSERT INTO watchlist_history (date, symbol) VALUES (%s, %s) ON CONFLICT (date, symbol) DO NOTHING"
+                    DatabaseService.execute_query(q, (today, row['symbol']))
+                print(f"💾 Saved {len(buy_rows)} symbols to history")
+            buy_block = "\n".join(buy_lines) if buy_lines else "_(Không có mã BUY hôm nay)_"
+
+            # ── Assemble full report ─────────────────────────────────
+            msg = (
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📊 <b>BÁO CÁO CUỐI PHIÊN</b>  •  {date_label}\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"🦈 <b>TOP 5 CÁ MẬP MUA NHIỀU NHẤT:</b>\n"
+                f"{shark_block}\n\n"
+                f"💎 <b>KHUYẾN NGHỊ MUA HÔM NAY</b> (Top {len(buy_rows) if buy_rows else 0} mã):\n"
+                f"{buy_block}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"⏰ Kết thúc phiên {date_label}  |  🔄 Reset lúc 08:30"
+            )
+            self.bot.send_message(self.alert_chat_id, msg, parse_mode='HTML')
+            print(f"📊 Post-market report sent ({len(buy_rows) if buy_rows else 0} BUY signals, {len(top_sharks)} sharks)")
+
         except Exception as e:
             print(f"❌ Daily summary error: {e}")
+
 
     def _send_volatility_alert(self, symbol, change_pc, price, total_vol, direction, icon):
         """Send alert for high volatility stock movements."""

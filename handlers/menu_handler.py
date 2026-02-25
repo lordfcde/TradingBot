@@ -12,8 +12,6 @@ def create_main_menu():
         types.KeyboardButton("ℹ️ Hướng dẫn / Help"),
         types.KeyboardButton("📞 Liên hệ Admin")
     )
-    # Row 3
-    markup.add(types.KeyboardButton("🦈 Săn Cá Mập"))
     return markup
 
 def create_shark_menu():
@@ -61,10 +59,11 @@ def send_welcome(bot, message):
 
 def handle_help(bot, message):
     help_text = (
-        "🤖 **HƯỚNG DẪN SỬ DỤNG SUPER BOT**\n\n"
-        "1. Nhấn '🌟 Giá Vàng Thế Giới' để xem giá vàng Real-time.\n"
-        "2. Nhấn '🇻🇳 Cổ Phiếu Việt Nam' để xem tin tức thị trường.\n"
-        "3. Nhấn '🦈 Săn Cá Mập' để theo dõi dòng tiền lớn (>1 Tỷ).\n"
+        "🤖 **HƯỚNG DẪN Sử DỤNG SUPER BOT**\n\n"
+        "1. Nhấn '🥇 Giá Vàng Thế Giới' để xem giá vàng Real-time.\n"
+        "2. Nhấn '🆻🇳 Cổ Phiếu Việt Nam' để xem thị trường, tra cứu và xem Watchlist.\n"
+        "3. 🦈 **Chế độ Săn Cá Mập luôn bật tự động** (không cần cài đặt).\n"
+        "   Bot tự động bị tín hiệu khi phát hiện lệnh lớn và gửi báo cáo lúc 15h15 hàng ngày.\n"
         "4. Nhấn '📞 Liên hệ Admin' nếu cần hỗ trợ."
     )
     bot.reply_to(message, help_text, parse_mode="Markdown")
