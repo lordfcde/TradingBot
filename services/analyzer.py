@@ -22,9 +22,9 @@ class TrinityAnalyzer:
     def __init__(self, vnstock_service=None):
         self.vnstock_service = vnstock_service
         self.engine = TrinityLite()
-        self.timeframe = "1H"       # Hourly timeframe for T+2.5 strategy
-        self.lookback_days = 30     # Need ~50 bars. 5 bars/day * 30 days = 150 bars. Safe.
-        print("✅ TrinityAnalyzer initialized (1H hybrid mode)")
+        self.timeframe = "15m"      # 15-minute candles for fast T+2.5 breakout detection
+        self.lookback_days = 10     # ~450 bars of 15M data — more than enough for indicators
+        print("✅ TrinityAnalyzer initialized (15M Breakout Mode for T+2.5)")
 
     # ── Public API ──────────────────────────────────────────
     def check_signal(self, symbol: str, timeframe: str = '1H') -> dict:
@@ -271,76 +271,79 @@ class TrinityAnalyzer:
             if rsi > 75:
                  return {'approved': False, 'reason': f"RSI Quá Mua ({rsi:.1f} > 75)", 'message': None}
 
-            # 5. Kill Switch 4: Volume Quality
-            # Expected Vol = Current Vol / Avg Vol * (Time Ratio? No, just raw ratio > 1.0)
+            # 5. Kill Switch 4: Volume Quality — Nổ khối lượng đột biến?
             vol_avg = analysis.get('vol_avg', 1)
             vol_cur = shark_payload.get('total_vol', 0)
-            # If current vol < avg vol (at end of day), it might be weak. 
-            # But during day, we check if it's "Active".
-            # User Rule: "If Volume dự kiến < 1.0 (Yếu hơn trung bình): Loại."
-            # We approximate this: If vol_cur < 50% of avg during session, warn.
-            # But let's stick to TrinityLite's 'vol_dry'.
-            
-            # Better check:
-            vol_ratio = vol_cur / vol_avg if vol_avg > 0 else 0
-            # If ratio is too low (e.g. < 0.5), it means very low liquidity today?
-            # Or user means "Volume Prediction". 
-            # Simple Proxy: Check if 'vol_dry' is True -> REJECT
             if analysis.get('vol_dry'):
-                 return {'approved': False, 'reason': "Volume Cạn Kiệt (Dry)", 'message': None}
-                 
+                return {'approved': False, 'reason': "Volume Cạn Kiệt (Dry)", 'message': None}
+
+            # Kill Switch 4b: Relative volume ≥ 200% MA20 — yêu cầu nổ vol thực sự
+            rel_vol = vol_cur / vol_avg if vol_avg > 0 else 0
+            if rel_vol < 2.0 and not analysis.get('vol_climax'):
+                return {'approved': False, 'reason': f"Vol Bình Thường ({rel_vol:.1f}x < 2x) — Chưa nổ", 'message': None}
+
             # 5b. Kill Switch 5: Trend Confirmation (Anti-Trap)
-            # Lọc điểm nổ rơi vào trend giảm (ra hàng/phân phối)
             close = analysis.get('close', 0)
             ema20 = analysis.get('ema20', 0)
             supertrend_dir = analysis.get('supertrend_dir', 1.0)
-            
             is_above_ema20 = close > ema20 if ema20 > 0 else True
             is_st_uptrend = supertrend_dir > 0
-            
-            # Bắt buộc Giá phải trên EMA20 HOẶC Supertrend phải báo Tăng (Để tránh dao rơi)
             if not is_above_ema20 and not is_st_uptrend:
                 return {'approved': False, 'reason': f"Downtrend (Dưới EMA20 & ST Giảm)", 'message': None}
 
-            # 6. APPROVAL CRITERIA (Breakout)
-            # Must have BUY rating OR specific Trigger
+            # 6. APPROVAL CRITERIA
             rating = analysis.get('rating', '')
             is_buy = "MUA" in rating
-            
             if not is_buy:
-                 return {'approved': False, 'reason': f"Rating Weak ({rating})", 'message': None}
+                return {'approved': False, 'reason': f"Rating Yếu ({rating})", 'message': None}
 
-
-            # ── CONSTRUCT APPROVED MESSAGE ──────────────────
+            # ── CONSTRUCT APPROVED MESSAGE ──────────────────────────────────
             from datetime import datetime, timedelta, timezone
             vn_now = datetime.now(timezone.utc) + timedelta(hours=7)
-            time_str = vn_now.strftime("%H:%M:%S")
-            
-            price = shark_payload.get('price', 0)
-            change = shark_payload.get('change_pc', 0)
-            change_icon = "📈" if change >= 0 else "📉"
-            
-            # Lọc theo cường độ tín hiệu để tối ưu UI Telegram
-            is_strong_signal = any(word in rating.upper() for word in ['MẠNH', 'DIAMOND', 'NỔ'])
-            
-            if is_strong_signal:
-                msg = (
-                    f"🚀 **PHÁT HIỆN ĐIỂM NỔ: #{symbol}**\n"
-                    f"⏰ {time_str}\n\n"
-                    f"✅ **LÝ DO KÍCH HOẠT:**\n"
-                    f"• Giá: `{price:,.0f}` ({change:+.2f}%)\n"
-                    f"• Vol: Đột biến `{vol_ratio:.1f}x` TB.\n"
-                    f"• Trend: ADX `{adx:.1f}` ({'MẠNH TĂNG 🔥' if is_bullish else 'YẾU 🟡'})\n\n"
-                    f"🛡️ **CHECK T+2.5:**\n"
-                    f"• VN-INDEX: {market['status']} ({market['current']:.1f})\n"
-                    f"• Dư địa: RSI `{rsi:.1f}` (An toàn)\n\n"
-                    f"👉 **KHUYẾN NGHỊ:**\n"
-                    f"**{rating}**"
-                )
+            time_str = vn_now.strftime("%H:%M")
+            h = vn_now.hour
+            m = vn_now.minute
+            hm = h * 100 + m  # e.g. 09:25 → 925
+
+            # Golden Hour tier (C)
+            if (915 <= hm <= 1030):
+                session_badge = "🏆 PRIME (Sáng Vàng)"
+                session_icon  = "🔥"
+            elif (1400 <= hm <= 1430):
+                session_badge = "🏆 PRIME (Chiều ATC)"
+                session_icon  = "🔥"
+            elif (1130 <= hm <= 1300):
+                session_badge = "⚠️ GIỜ TRƯA (Ít tin cậy)"
+                session_icon  = "🟡"
             else:
-                # Tín hiệu Mua thường (MUA GIA TĂNG, MUA THĂM DÒ) -> Rút gọn 1 dòng
-                val_billion = shark_payload.get('order_value', 0) / 1_000_000_000
-                msg = f"🟢 **{rating}**: #{symbol} | 💰 {val_billion:.1f}T | 💵 {price:,.0f} ({change:+.2f}%) | ADX: {adx:.1f} | 🕐 {time_str}"
+                session_badge = "🟢 PHIÊN THƯỜNG"
+                session_icon  = "🟢"
+
+            price      = shark_payload.get('price', 0)
+            change     = shark_payload.get('change_pc', 0)
+            order_val  = shark_payload.get('order_value', 0)
+            val_b      = order_val / 1_000_000_000
+            rel_vol    = vol_cur / vol_avg if vol_avg > 0 else 0
+            is_strong  = any(w in rating.upper() for w in ['MẠNH', 'DIAMOND', 'NỔ'])
+            change_icon = "📈" if change >= 0 else "📉"
+
+            # ── Premium One-Block Alert ─────────────────────────────────────
+            shock_line = (
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"{session_icon} <b>BREAKOUT SIGNAL</b> • {session_badge}\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📌 <b>#{symbol}</b>   ⏰ <code>{time_str}</code>\n"
+                f"💰 Lệnh cá mập: <b>{val_b:.1f} Tỷ</b>   {change_icon} <b>{change:+.2f}%</b>\n"
+                f"📊 Vol nổ: <b>{rel_vol:.1f}x</b> so với TB 20 phiên\n"
+                f"\n"
+                f"🧠 <b>KỸ THUẬT (15M)</b>\n"
+                f"• Trend: <b>{'TĂNG ✅' if is_st_uptrend else 'SIDEWAY'}</b>  |  ADX: <b>{adx:.0f}</b>\n"
+                f"• RSI: <b>{rsi:.0f}</b>  |  CMF: <b>{analysis.get('cmf', 0):.2f}</b>\n"
+                f"\n"
+                f"🎯 Rating: <b>{rating}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            )
+            msg = shock_line
 
             return {
                 'approved': True,

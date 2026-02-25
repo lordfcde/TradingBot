@@ -61,13 +61,19 @@ class SharkHunterService:
         self.price_tracker = {}  # Track price changes for all stocks
         self.avg_volume_cache = {}  # Cache avg volume to reduce API calls
         
-        # Lunch break tracking (to clear cache and avoid spam)
+        # Lunch break tracking
         self.is_lunch_break = False
         self.last_lunch_check = time.time()
         
         # Daily summary tracking
         self.last_summary_date = None
         self.summary_sent_today = False
+        
+        # ── A: Shark Pressure Window ───────────────────────
+        # { symbol: [timestamp1, timestamp2, ...] } of large BUY orders
+        self.shark_pressure = {}
+        self.PRESSURE_WINDOW = 600   # 10 minutes (seconds)
+        self.PRESSURE_MIN    = 2     # ≥2 large orders in window → fire signal
         
         self.last_maintenance = time.time()
         self.last_reset_date = (datetime.now(timezone.utc) + timedelta(hours=7)).strftime("%Y-%m-%d")
@@ -306,85 +312,62 @@ class SharkHunterService:
 
 
 
-            # DEBUG THRESHOLD (Uncommented for debugging)
-            print(f"DEBUG CHECK: {symbol} Val={order_value:,.0f} Min={self.min_value:,.0f} Skip={order_value < self.min_value}")
+            # DEBUG THRESHOLD
             if order_value < self.min_value:
-                # User Requirement: 1 order must be > min_value. Do not accumulate small orders.
-                print(f"  -> Skipped {symbol} (Value < Min)")
                 return
 
-            # It is a SHARK order!
-            # NEW LOGIC: Check if current volume > 120% of 5-day avg volume
-            print(f"🔍 WATCHLIST CHECK: {symbol} - Shark order detected (total_vol: {total_vol:,.0f}) | RawVol: {raw_vol} {latency_msg}")
-            
-            # Check volume condition for watchlist
-            if self.vnstock_service and total_vol > 0:
-                try:
-                    # Check if we have cached avg volume (cache for 1 hour)
-                    cache_key = symbol
-                    now = time.time()
-                    
-                    if cache_key in self.avg_volume_cache:
-                        cached_data = self.avg_volume_cache[cache_key]
-                        # Cache valid for 1 hour
-                        if (now - cached_data['timestamp']) < 3600:
-                            avg_vol_5d = cached_data['avg_vol']
-                            print(f"  📦 Using cached avg vol for {symbol}: {avg_vol_5d:,.0f}")
-                        else:
-                            # Cache expired, fetch new
-                            avg_vol_5d = self._fetch_avg_volume(symbol)
-                    else:
-                        # No cache, fetch
-                        avg_vol_5d = self._fetch_avg_volume(symbol)
-                    
-                    if avg_vol_5d > 0:
-                        volume_threshold = avg_vol_5d * 1.2  # 120% of avg
-                        vol_ratio = (total_vol / avg_vol_5d) * 100
-                        
-                        print(f"  📊 {symbol}: Current vol = {total_vol:,.0f}, Avg 5d = {avg_vol_5d:,.0f} ({vol_ratio:.1f}%)")
-                        
-                        if total_vol >= volume_threshold:
-                            self.watchlist_service.add_to_watchlist(symbol)
-                            print(f"🔥 WATCHLIST ADDED: {symbol} - Volume {vol_ratio:.1f}% of avg (>{120}%)")
-                        else:
-                            print(f"  ⚠️ {symbol} volume too low for watchlist ({vol_ratio:.1f}% < 120%)")
-                    else:
-                        print(f"  ⚠️ Could not get avg volume for {symbol}, skipping watchlist check")
-                        
-                except Exception as e:
-                    print(f"  ❌ Watchlist volume check error for {symbol}: {e}")
-            else:
-                if not self.vnstock_service:
-                    print(f"  ⚠️ vnstock service not available, cannot check volume")
-            
-            # 2. Update Statistics and add to history AFTER counting
-            self._update_stats(symbol, order_value, change_pc, side)
-            
-            # DEBUG: Log detected shark
-            print(f"🦈 SHARK DETECTED: {symbol} ({side}) - {order_value:,.0f} VND")
+            # ── Shark order detected ─────────────────────────────
+            side_str = "MUA" if side == "Buy" else "BÁN" if side == "Sell" else "?"
+            print(f"🦈 SHARK {side_str}: {symbol} | {order_value/1e9:.1f}T VND")
 
-            # 3. Check Cooldown for Alert (Separate for Buy vs Sell)
+            # ── C: Golden Hours Gate ─────────────────────────────
+            # During 11:30-13:00 (lunch) suppress analysis (low quality signals)
+            hm = vn_now.hour * 100 + vn_now.minute
+            is_lunch = (1130 <= hm <= 1300)
+
+            # ── A: Shark Pressure Window ─────────────────────────
+            now_t = time.time()
+            if side == "Buy":
+                if symbol not in self.shark_pressure:
+                    self.shark_pressure[symbol] = []
+                # Prune old timestamps outside window
+                self.shark_pressure[symbol] = [
+                    ts for ts in self.shark_pressure[symbol]
+                    if now_t - ts < self.PRESSURE_WINDOW
+                ]
+                self.shark_pressure[symbol].append(now_t)
+                pressure_count = len(self.shark_pressure[symbol])
+            else:
+                pressure_count = 0
+
+            # Update statistics
+            self._update_stats(symbol, order_value, change_pc, side)
+
+            # ── Cooldown per symbol/side ─────────────────────────
             now = time.time()
             alert_key = f"{symbol}_{side}"
             last_alert = self.alert_history.get(alert_key, 0)
-            
-            # User Request: Cooldown check restored (1 min+)
             if now - last_alert < self.cooldown:
-               return
+                return
 
-            # 4. Trigger Alert
-            self.alert_history[alert_key] = now
-            self.send_alert(symbol, real_price, change_pc, total_vol, order_value, vol, side)
-            
-            # 5. Hybrid Analysis (Async) — Shark + Trinity
-            if self.analyzer:
-                threading.Thread(
-                    target=self._run_hybrid_analysis,
-                    args=(symbol, real_price, change_pc, total_vol, order_value, vol, side),
-                    daemon=True
-                ).start()
+            # ── Trigger Hybrid Analysis ──────────────────────────
+            # Requires: BUY side + pressure ≥2 (or first spike) + not lunch hour
+            if side == "Buy" and self.analyzer:
+                should_fire = (pressure_count >= self.PRESSURE_MIN) or \
+                              (order_value >= self.min_value * 3)  # Very large single order bypasses wait
+                if should_fire and not is_lunch:
+                    self.alert_history[alert_key] = now
+                    threading.Thread(
+                        target=self._run_hybrid_analysis,
+                        args=(symbol, real_price, change_pc, total_vol, order_value, vol, side),
+                        daemon=True
+                    ).start()
+                elif is_lunch:
+                    print(f"⏸️ {symbol} — Bỏ qua (giờ trưa 11:30-13:00)")
+                else:
+                    print(f"📈 {symbol} — Áp lực {pressure_count}/{self.PRESSURE_MIN} lệnh, chờ thêm...")
             elif side == "Buy" and self.trinity_monitor:
-                # Fallback to old trinity check if analyzer not set
+                # Fallback
                 threading.Thread(target=self._check_trinity_signal, args=(symbol,), daemon=True).start()
 
 
