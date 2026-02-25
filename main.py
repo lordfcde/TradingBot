@@ -7,6 +7,8 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 import os
+from dotenv import load_dotenv
+load_dotenv()
 
 # Services
 from services.dnse_service import DNSEService

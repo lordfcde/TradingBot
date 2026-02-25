@@ -21,7 +21,7 @@ class TrinityLite:
     """
 
     # ── Config ──────────────────────────────────────────────
-    EMA_PERIODS   = [50, 144, 233]
+    EMA_PERIODS   = [20, 50, 144, 233]
     CMF_LENGTH    = 20
     RSI_LENGTH    = 14
     ADX_LENGTH    = 14    # Added for Trend Strength
@@ -65,7 +65,18 @@ class TrinityLite:
              df['adx'] = df[f'ADX_{self.ADX_LENGTH}']
              df['dmp'] = df[f'DMP_{self.ADX_LENGTH}']
              df['dmn'] = df[f'DMN_{self.ADX_LENGTH}']
-
+         # ── 2b. Supertrend ──────────────────────────────────
+         try:
+             st_df = ta.supertrend(df['high'], df['low'], df['close'], length=10, multiplier=3)
+             if st_df is not None and not st_df.empty:
+                 df = pd.concat([df, st_df], axis=1)
+                 for col in st_df.columns:
+                     if col.startswith('SUPERTd_'):
+                         df['supertrend_dir'] = st_df[col]
+                     elif col.startswith('SUPERT_'):
+                         df['supertrend'] = st_df[col]
+         except Exception as e:
+             pass
         # ── 3. VSA (Volume Spread Analysis) ─────────────────
         vol_sma = df['volume'].rolling(window=self.VOL_AVG_LEN).mean()
         df['vol_avg'] = vol_sma
@@ -201,6 +212,9 @@ class TrinityLite:
                 'close': close,
                 'volume': safe_float(last.get('volume', 0)),
                 'vol_avg': safe_float(last.get('vol_avg', 0)),
+                'ema20': safe_float(last.get('ema_20', 0)),
+                'supertrend': safe_float(last.get('supertrend', 0)),
+                'supertrend_dir': safe_float(last.get('supertrend_dir', 1.0)),
                 'trend': "UPTREND" if close > last.get('ema_50', 0) else "DOWNTREND"
             }
 

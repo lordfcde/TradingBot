@@ -2,8 +2,10 @@ import json
 import os
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone, timedelta
+from services.analyzer import TrinityAnalyzer
 from services.watchlist_service import WatchlistService
+from services.database_service import DatabaseService
 
 # ==========================================
 # CONFIGURATION & CONSTANTS
@@ -468,41 +470,44 @@ class SharkHunterService:
         if not self.shark_stats:
             return "🦈 **Chưa phát hiện Cá Mập nào hôm nay.**"
             
-        # Get Top Buyers
+        # Top 10 by total buy value
         top_buyers = sorted(
-            [item for item in self.shark_stats.items() if item[1].get('total_buy_val', 0) > 0],
+            [(sym, data) for sym, data in self.shark_stats.items() if data.get('total_buy_val', 0) > 0],
             key=lambda x: x[1].get('total_buy_val', 0),
             reverse=True
-        )[:5]
+        )[:10]
 
-        # Get Top Sellers
+        # Top 5 sellers
         top_sellers = sorted(
-            [item for item in self.shark_stats.items() if item[1].get('total_sell_val', 0) > 0],
+            [(sym, data) for sym, data in self.shark_stats.items() if data.get('total_sell_val', 0) > 0],
             key=lambda x: x[1].get('total_sell_val', 0),
             reverse=True
         )[:5]
         
-        msg = "🦈 **THỐNG KÊ CÁ MẬP HÔM NAY** 🦈\n"
         vn_now = datetime.now(timezone.utc) + timedelta(hours=7)
+        msg = f"🦈 **THỐNG KÊ CÁ MẬP HÔM NAY** 🦈\n"
         msg += f"🕒 Cập nhật: {vn_now.strftime('%H:%M:%S')}\n"
-        msg += "=============================\n"
+        msg += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
         
         if top_buyers:
-            msg += "🏆 **TOP GOM HÀNG (MUA):**\n"
-            for sym, data in top_buyers:
+            msg += "🏆 **TOP 10 GOM HÀNG (MUA):**\n"
+            medals = ["🥇", "🥈", "🥉"]
+            for idx, (sym, data) in enumerate(top_buyers, 1):
                 val_billion = data['total_buy_val'] / 1_000_000_000
-                msg += f"• **{sym}**: {val_billion:.1f} Tỷ 🟢\n"
-            msg += "-----------------------------\n"
+                medal = medals[idx-1] if idx <= 3 else f"{idx}."
+                count = data.get('count', 0)
+                msg += f"{medal} **#{sym}**: {val_billion:.1f} Tỷ 🟢 ({count} lệnh)\n"
+            msg += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
             
         if top_sellers:
             msg += "📉 **TOP XẢ HÀNG (BÁN):**\n"
             for sym, data in top_sellers:
                 val_billion = data['total_sell_val'] / 1_000_000_000
-                msg += f"• **{sym}**: {val_billion:.1f} Tỷ 🔴\n"
-            msg += "=============================\n"
-        msg += "\n📝 **LỆNH GẦN NHẤT:**\n"
+                msg += f"• **#{sym}**: {val_billion:.1f} Tỷ 🔴\n"
+            msg += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
         
-        recent = list(reversed(self.trade_history))[:15]
+        msg += "\n📝 **LỆNH GẦN NHẤT:**\n"
+        recent = list(reversed(self.trade_history))[:10]
         for trade in recent:
             val_billion = trade['value'] / 1_000_000_000
             s = trade.get('side', 'Unknown')
@@ -546,45 +551,39 @@ class SharkHunterService:
             return
         
         try:
-            # Get today's watchlist entries
-            watchlist = self.watchlist_service.get_active_watchlist()
-            
-            # Filter for entries added today
-            from datetime import datetime
             vn_now = datetime.now(timezone.utc) + timedelta(hours=7)
             today = vn_now.strftime("%Y-%m-%d")
-            today_symbols = []
+            today_display = vn_now.strftime("%d/%m")
+
+            # Query TOP 20 mã có nhiều tín hiệu nhất hôm nay từ DB
+            query = """
+                SELECT symbol, signal_count
+                FROM watchlist
+                WHERE RIGHT(display_time, 5) = %s
+                ORDER BY signal_count DESC, entry_time DESC
+                LIMIT 20
+            """
+            rows = DatabaseService.execute_query(query, (today_display,), fetch=True)
             
-            for entry in watchlist:
-                entry_time = entry.get('entry_time', 0)
-                entry_date = datetime.fromtimestamp(entry_time).strftime("%Y-%m-%d")
-                if entry_date == today:
-                    today_symbols.append(entry['symbol'])
-            
-            if today_symbols:
-                # Format as horizontal list
+            if rows:
+                today_symbols = [row['symbol'] for row in rows]
                 symbols_text = " | ".join([f"#{sym}" for sym in today_symbols])
                 
-                # Save to history file
-                history_file = "watchlist_history.txt"
-                log_line = f"{vn_now.strftime('%Y-%m-%d %H:%M')} | {len(today_symbols)} mã | {symbols_text}\n"
+                # Save top 20 vào watchlist_history
+                for sym in today_symbols:
+                    ins_q = "INSERT INTO watchlist_history (date, symbol) VALUES (%s, %s) ON CONFLICT (date, symbol) DO NOTHING"
+                    DatabaseService.execute_query(ins_q, (today, sym))
+                print(f"💾 Saved top {len(today_symbols)} symbols to history")
                 
-                try:
-                    with open(history_file, 'a', encoding='utf-8') as f:
-                        f.write(log_line)
-                    print(f"💾 Saved to {history_file}")
-                except Exception as e:
-                    print(f"⚠️ Could not save to history file: {e}")
-                
-                # Send Telegram message
+                # Gửi Telegram
                 msg = (
-                    f"📊 <b>WATCHLIST HÔM NAY ({len(today_symbols)} mã)</b>\n"
+                    f"📊 <b>TOP WATCHLIST HÔM NAY ({len(today_symbols)} mã)</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
                     f"{symbols_text}\n"
                     f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"💎 Tất cả đều có rating <b>BUY</b> (Mua mạnh)\n"
+                    f"🔥 Đây là Top 20 mã có nhiều tín hiệu nhất hôm nay\n"
                     f"⏰ Tóm tắt cuối phiên {vn_now.strftime('%d/%m/%Y')}\n"
-                    f"💾 Đã lưu vào file lịch sử"
+                    f"💾 Đã lưu vào lịch sử database"
                 )
                 self.bot.send_message(self.alert_chat_id, msg, parse_mode='HTML')
                 print(f"📊 Daily summary sent: {len(today_symbols)} symbols")
@@ -840,6 +839,13 @@ class SharkHunterService:
             self.alert_history.clear()
             self.last_reset_date = today_str
             self.summary_sent_today = False  # Reset summary flag
+            
+            # Reset signal_count cho watchlist trong database (fresh start mỗi phiên)
+            try:
+                DatabaseService.execute_query("UPDATE watchlist SET signal_count = 1 WHERE signal_count > 1")
+                print("🔄 DB signal_count reset for new trading day")
+            except Exception as e:
+                print(f"⚠️ signal_count reset error: {e}")
         
         # Send Daily Watchlist Summary at 15:15 (after market close)
         if dt_now.hour == 15 and dt_now.minute >= 15:

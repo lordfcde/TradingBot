@@ -488,56 +488,73 @@ def handle_show_watchlist(bot, message, watchlist_service):
         bot.reply_to(message, "❌ Lỗi hiển thị menu Watchlist.")
 
 def show_watchlist_view(bot, call, watchlist_service):
-    """Show current watchlist + 3-day history"""
+    """Show top 20 signals today + 3-day history"""
     try:
-        items = watchlist_service.get_active_watchlist()
-        
-        # Build message with current watchlist
-        lines = []
-        if items:
-            lines.append("-----------------------------------")
-            lines.append("⭐ **WATCHLIST HIỆN TẠI** (72h)")
-            lines.append("-----------------------------------")
-            for idx, item in enumerate(items[:10], 1):
-                sym = item['symbol']
-                t_str = item['time_str']
-                lines.append(f"{idx}. **#{sym}** (Báo: {t_str})")
-            
-            if len(items) > 10:
-                lines.append(f"... và {len(items)-10} mã khác")
+        from services.database_service import DatabaseService
+        from datetime import datetime, timezone, timedelta
+
+        vn_time = datetime.now(timezone.utc) + timedelta(hours=7)
+        today_date = vn_time.strftime("%d/%m")
+
+        # ── Section 1: Top 20 today sorted by signal_count ──
+        top_query = """
+            SELECT symbol, signal_count, display_time
+            FROM watchlist
+            WHERE RIGHT(display_time, 5) = %s
+            ORDER BY signal_count DESC, entry_time DESC
+            LIMIT 20
+        """
+        top_rows = DatabaseService.execute_query(top_query, (today_date,), fetch=True)
+
+        lines = ["-----------------------------------",
+                 f"⭐ **WATCHLIST HÔM NAY** ({today_date}) — Top 20",
+                 "-----------------------------------"]
+
+        if top_rows:
+            for idx, row in enumerate(top_rows, 1):
+                sym = row['symbol']
+                count = row['signal_count']
+                t = row['display_time']
+                time_part = t.split(' ')[0] if t else "?"
+                count_str = f" 🔥×{count}" if count > 1 else ""
+                lines.append(f"{idx}. **#{sym}**  `{time_part}`{count_str}")
         else:
-            lines.append("📭 Watchlist hiện tại đang trống")
-        
-        # Add history section (3 days instead of 7)
+            lines.append("📭 Chưa có mã nào hôm nay")
+
+        # ── Section 2: 3-day history ──
         lines.append("\n📊 **LỊCH SỬ 3 NGÀY GẦN NHẤT:**")
         lines.append("-----------------------------------")
-        
-        history_file = "watchlist_history.txt"
-        try:
-            import os
-            if os.path.exists(history_file):
-                with open(history_file, 'r', encoding='utf-8') as f:
-                    all_lines = f.readlines()
-                
-                if all_lines:
-                    # Show last 3 days
-                    recent = all_lines[-3:]
-                    for line in recent:
-                        lines.append(line.strip())
-                else:
-                    lines.append("(Chưa có lịch sử)")
-            else:
-                lines.append("(Chưa có lịch sử)")
-        except Exception as e:
-            print(f"History read error: {e}")
-            lines.append("(Lỗi đọc lịch sử)")
-        
+
+        hist_query = """
+            SELECT date, array_agg(symbol ORDER BY symbol) AS symbols
+            FROM watchlist_history
+            GROUP BY date
+            ORDER BY date DESC
+            LIMIT 3
+        """
+        hist_rows = DatabaseService.execute_query(hist_query, fetch=True)
+        if hist_rows:
+            for row in hist_rows:
+                d = row['date']
+                date_label = d.strftime('%d/%m') if hasattr(d, 'strftime') else str(d)
+                syms = row['symbols']
+                symbols_text = " | ".join([f"#{s}" for s in syms])
+                lines.append(f"📅 *{date_label}* — {len(syms)} mã")
+                lines.append(f"`{symbols_text}`")
+        else:
+            lines.append("_(Chưa có lịch sử)_")
+
         lines.append("-----------------------------------")
-        lines.append("💡 Watchlist tự động xóa sau 72h")
-        
+        lines.append("💡 Watchlist tự động xóa sau 72h | Lưu Top 20 sau 15:15")
+
         msg = "\n".join(lines)
-        bot.edit_message_text(msg, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode='Markdown')
-        
+        bot.edit_message_text(
+            msg,
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            parse_mode='Markdown'
+        )
+
     except Exception as e:
         print(f"Watchlist view error: {e}")
         bot.answer_callback_query(call.id, "❌ Lỗi hiển thị watchlist")
@@ -545,59 +562,56 @@ def show_watchlist_view(bot, call, watchlist_service):
 def show_top_symbols(bot, call):
     """Show top symbols by number of unique days they were added to watchlist"""
     try:
-        history_file = "watchlist_history.txt"
-        import os
-        from collections import defaultdict
+        from services.database_service import DatabaseService
         
-        if not os.path.exists(history_file):
-            bot.answer_callback_query(call.id, "❌ Chưa có lịch sử")
-            return
+        # Combine history dates and today's watchlist dates 
+        # (entry_time converted to VN date)
+        query = """
+            WITH combined_data AS (
+                SELECT date, symbol
+                FROM watchlist_history
+                UNION
+                SELECT (TO_TIMESTAMP(entry_time) + INTERVAL '7 hours')::date as date, symbol
+                FROM watchlist
+            )
+            SELECT symbol, COUNT(date) as day_count
+            FROM combined_data
+            GROUP BY symbol
+            ORDER BY day_count DESC
+            LIMIT 10
+        """
+        rows = DatabaseService.execute_query(query, fetch=True)
         
-        with open(history_file, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-        
-        if not lines:
+        if not rows:
             bot.answer_callback_query(call.id, "❌ Chưa có dữ liệu")
             return
-        
-        # Track which dates each symbol appeared on
-        symbol_dates = defaultdict(set)  # symbol -> set of dates
-        
-        for line in lines:
-            if '|' in line:
-                parts = line.split('|')
-                if len(parts) >= 3:
-                    # Extract date (format: "2026-02-12 15:15")
-                    date_str = parts[0].strip().split()[0]  # Get "2026-02-12"
-                    
-                    # Extract symbols (format: #SYMBOL)
-                    symbols_part = '|'.join(parts[2:])
-                    symbols = [s.strip().replace('#', '') for s in symbols_part.split('|') if s.strip().startswith('#')]
-                    
-                    # Add this date to each symbol's set
-                    for symbol in symbols:
-                        symbol_dates[symbol].add(date_str)
-        
-        # Count unique days per symbol
-        symbol_day_counts = [(symbol, len(dates)) for symbol, dates in symbol_dates.items()]
-        symbol_day_counts.sort(key=lambda x: x[1], reverse=True)
-        
-        # Get top 10
-        top_symbols = symbol_day_counts[:10]
-        
-        if not top_symbols:
-            bot.answer_callback_query(call.id, "❌ Không có dữ liệu")
-            return
+            
+        # Get total number of active days across both tables
+        count_query = """
+            WITH combined_data AS (
+                SELECT date, symbol
+                FROM watchlist_history
+                UNION
+                SELECT (TO_TIMESTAMP(entry_time) + INTERVAL '7 hours')::date as date, symbol
+                FROM watchlist
+            )
+            SELECT COUNT(DISTINCT date) as total_days 
+            FROM combined_data
+        """
+        count_res = DatabaseService.execute_query(count_query, fetch=True)
+        total_days = count_res[0]['total_days'] if count_res else 0
         
         # Format message
         lines_msg = ["📊 **TOP MÃ XUẤT HIỆN LIÊN TỤC**", "━━━━━━━━━━━━━━━━━━━━━━━━"]
-        for idx, (symbol, day_count) in enumerate(top_symbols, 1):
+        for idx, row in enumerate(rows, 1):
+            symbol = row['symbol']
+            day_count = row['day_count']
             medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else f"{idx}."
             day_text = "ngày" if day_count > 1 else "ngày"
             lines_msg.append(f"{medal} **#{symbol}** — {day_count} {day_text}")
         
         lines_msg.append("━━━━━━━━━━━━━━━━━━━━━━━━")
-        lines_msg.append(f"💡 Dựa trên {len(lines)} phiên giao dịch")
+        lines_msg.append(f"💡 Dựa trên {total_days} phiên giao dịch")
         
         msg = "\n".join(lines_msg)
         bot.edit_message_text(msg, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode='Markdown')
@@ -607,30 +621,28 @@ def show_top_symbols(bot, call):
         bot.answer_callback_query(call.id, "❌ Lỗi thống kê")
 
 def show_today_buy_signals(bot, call, watchlist_service):
-    """Show symbols with most BUY signals today"""
+    """Show top 20 symbols by signal count today"""
     try:
-        from datetime import datetime
-        from collections import Counter
+        from datetime import datetime, timezone, timedelta
+        from services.database_service import DatabaseService
         
-        data = watchlist_service._load_data()
+        vn_time = datetime.now(timezone.utc) + timedelta(hours=7)
+        today_display = vn_time.strftime("%d/%m")
         
-        if not data:
-            bot.answer_callback_query(call.id, "❌ Watchlist trống")
-            return
+        # Top 20 mã được báo nhiều nhất hôm nay, không giới hạn chỉ mã có trinity
+        query = """
+            SELECT 
+                symbol, 
+                signal_count,
+                CAST(COALESCE(trinity_data->>'adx', '0') AS FLOAT) as adx
+            FROM watchlist
+            WHERE RIGHT(display_time, 5) = %s
+            ORDER BY signal_count DESC, adx DESC
+            LIMIT 20
+        """
+        rows = DatabaseService.execute_query(query, (today_display,), fetch=True)
         
-        # Filter for today only
-        today = datetime.now().strftime("%Y-%m-%d")
-        today_symbols = []
-        
-        for symbol, info in data.items():
-            entry_time = info.get('entry_time', 0)
-            entry_date = datetime.fromtimestamp(entry_time).strftime("%Y-%m-%d")
-            
-            rating = info.get('trinity', {}).get('rating', '').upper()
-            if entry_date == today and ('BUY' in rating or 'MUA' in rating):
-                today_symbols.append(symbol)
-        
-        if not today_symbols:
+        if not rows:
             bot.edit_message_text(
                 "🔥 **BUY SIGNAL HÔM NAY**\n━━━━━━━━━━━━━━━━━━━━━━━━\n📭 Chưa có BUY signal nào hôm nay",
                 chat_id=call.message.chat.id,
@@ -638,21 +650,26 @@ def show_today_buy_signals(bot, call, watchlist_service):
                 parse_mode='Markdown'
             )
             return
-        
-        # Count occurrences (in case symbol added multiple times)
-        symbol_counts = Counter(today_symbols)
-        top_symbols = symbol_counts.most_common(10)
+            
+        total_signals = sum(r['signal_count'] for r in rows)
         
         # Format message
-        lines_msg = ["🔥 **BUY SIGNAL HÔM NAY**", "━━━━━━━━━━━━━━━━━━━━━━━━"]
-        for idx, (symbol, count) in enumerate(top_symbols, 1):
-            if count > 1:
-                lines_msg.append(f"{idx}. **#{symbol}** — {count} lần")
-            else:
-                lines_msg.append(f"{idx}. **#{symbol}**")
-        
+        lines_msg = [f"🔥 **BUY SIGNAL HÔM NAY** ({today_display})",
+                     "━━━━━━━━━━━━━━━━━━━━━━━━"]
+        medals = ["🥇", "🥈", "🥉"]
+        for idx, row in enumerate(rows, 1):
+            symbol = row['symbol']
+            count = row['signal_count']
+            adx = row['adx']
+            
+            medal = medals[idx-1] if idx <= 3 else f"{idx}."
+            count_str = f" 🔥×{count}" if count > 1 else ""
+            adx_str = f" | ADX {adx:.0f}" if adx > 0 else ""
+            lines_msg.append(f"{medal} **#{symbol}**{count_str}{adx_str}")
+                
         lines_msg.append("━━━━━━━━━━━━━━━━━━━━━━━━")
-        lines_msg.append(f"💎 Tổng {len(today_symbols)} BUY signal hôm nay")
+        lines_msg.append(f"💎 {len(rows)} mã | {total_signals} tổng tín hiệu hôm nay")
+        lines_msg.append("🔄 Tự reset lúc 08:30 sáng hôm sau")
         
         msg = "\n".join(lines_msg)
         bot.edit_message_text(msg, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode='Markdown')

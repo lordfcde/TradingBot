@@ -7,4 +7,4 @@ vnstock
 paho-mqtt
 python-dotenv
 requests
-
+psycopg2-binary

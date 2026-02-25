@@ -271,7 +271,7 @@ class TrinityAnalyzer:
             if rsi > 75:
                  return {'approved': False, 'reason': f"RSI Quá Mua ({rsi:.1f} > 75)", 'message': None}
 
-            # 5. Kill Switch #4: Volume Quality
+            # 5. Kill Switch 4: Volume Quality
             # Expected Vol = Current Vol / Avg Vol * (Time Ratio? No, just raw ratio > 1.0)
             vol_avg = analysis.get('vol_avg', 1)
             vol_cur = shark_payload.get('total_vol', 0)
@@ -288,6 +288,19 @@ class TrinityAnalyzer:
             # Simple Proxy: Check if 'vol_dry' is True -> REJECT
             if analysis.get('vol_dry'):
                  return {'approved': False, 'reason': "Volume Cạn Kiệt (Dry)", 'message': None}
+                 
+            # 5b. Kill Switch 5: Trend Confirmation (Anti-Trap)
+            # Lọc điểm nổ rơi vào trend giảm (ra hàng/phân phối)
+            close = analysis.get('close', 0)
+            ema20 = analysis.get('ema20', 0)
+            supertrend_dir = analysis.get('supertrend_dir', 1.0)
+            
+            is_above_ema20 = close > ema20 if ema20 > 0 else True
+            is_st_uptrend = supertrend_dir > 0
+            
+            # Bắt buộc Giá phải trên EMA20 HOẶC Supertrend phải báo Tăng (Để tránh dao rơi)
+            if not is_above_ema20 and not is_st_uptrend:
+                return {'approved': False, 'reason': f"Downtrend (Dưới EMA20 & ST Giảm)", 'message': None}
 
             # 6. APPROVAL CRITERIA (Breakout)
             # Must have BUY rating OR specific Trigger
