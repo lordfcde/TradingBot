@@ -127,36 +127,30 @@ def get_realtime_price_async(dnse_service, symbol, timeout=5.0):
 
 def format_stock_reply(data, shark_service=None, trinity_data=None):
     """
-    Format stock data message in 'Trinity Master AI' persona.
+    Format stock data — AWM Portal-style Professional Analysis v2.0.
+    4-section layout: Structure, Indicators, Strategy, Quality Gate.
     """
     stock_id = data.get("symbol", "UNKNOWN")
     price = float(data.get("matchPrice", 0))
-    # Normalize Price to K-VND (Handle 160000 vs 160)
     if price > 500:
         price = price / 1000
     
     change_pc = float(data.get("changedRatio", 0))
-    
     vol_str = str(data.get("totalVolumeTraded", "0"))
     raw_total_vol = int(vol_str) if vol_str.isdigit() else 0
     
-    # Fix: Only multiply by 10 for DNSE/MQTT data (if needed). Vnstock is already exact.
-    # If source is explicitly VNSTOCK, do not multiply.
     if data.get('source') == 'VNSTOCK':
         total_vol = raw_total_vol
     else:
-        # Assumption: MQTT/DNSE data might need x10 (based on previous fixes)
         total_vol = raw_total_vol * 10
     
-    # Date
     log_time = (datetime.now(timezone.utc) + timedelta(hours=7)).strftime("%H:%M %d/%m")
     
-    # Icons
     if change_pc > 0: trend_icon = "📈"
     elif change_pc < 0: trend_icon = "📉"
     else: trend_icon = "🟡"
 
-    # 🦈 Shark Stats
+    # Shark Stats
     shark_msg = ""
     if shark_service:
         try:
@@ -164,98 +158,236 @@ def format_stock_reply(data, shark_service=None, trinity_data=None):
             if s_buy > 0 or s_sell > 0:
                 s_net = s_buy - s_sell
                 icon = "🟢" if s_net >= 0 else "🔴"
-                shark_msg = f"\n🦈 **Cá Mập**: {icon} `{s_net/1e9:,.1f}T` (M:{s_buy/1e9:.0f} - B:{s_sell/1e9:.0f})"
+                shark_msg = f"\n🦈 Cá Mập: {icon} `{s_net/1e9:,.1f}T` (M:{s_buy/1e9:.0f} - B:{s_sell/1e9:.0f})"
         except: pass
 
-    # ── TRINITY MASTER AI FORMAT ─────────────────────────────
-    
-    # Default values if no Trinity data
-    t_trend = "N/A"
-    t_adx_status = "⚪ PRODATA"
-    t_signal = ""
-    t_structure = "Đang cập nhật..."
-    t_support = 0
-    t_res = 0
-    t_vol_avg = 0
-    t_rsi = 0
-    t_adx = 0
-    t_reasons = []
-    
+    # ── Extract v2.0 Trinity fields ──────────────────────────
+    t = {
+        'trend': 'N/A', 'adx_status': '⚪', 'signal': '', 'structure': '',
+        'support': 0, 'resistance': 0, 'vol_avg': 0, 'rsi': 0, 'adx': 0,
+        'cmf': 0, 'macd_hist': 0, 'chaikin': 0, 'reasons': [],
+        'wyckoff_phase': 'NONE', 'ema_aligned': 'NONE', 'trailing_stop': 0,
+        'atr': 0, 'supertrend_dir': 0, 'pump_dump_risk': False,
+        'exhaustion_top': False, 'vol_climax': False, 'shakeout': False,
+        'rating': '', 'score': 0, 'ema20': 0, 'ema50': 0, 'is_bullish': False
+    }
     if trinity_data:
-        t_trend = trinity_data.get('trend', 'N/A')
-        t_adx_status = trinity_data.get('adx_status', '⚪ PRODATA')
-        t_signal = trinity_data.get('signal', '')
-        t_structure = trinity_data.get('structure', '')
-        t_support = trinity_data.get('support', 0)
-        t_res = trinity_data.get('resistance', 0)
-        t_vol_avg = trinity_data.get('vol_avg', 0)
-        t_rsi = trinity_data.get('rsi', 0)
-        t_adx = trinity_data.get('adx', 0)
-        t_reasons = trinity_data.get('reasons', [])
-        
-    # RSI Status
-    rsi_status = "Trung tính"
-    if t_rsi > 70: rsi_status = "Quá mua ⚠️"
-    elif t_rsi < 30: rsi_status = "Quá bán 🟢"
-    elif t_rsi > 60: rsi_status = "Mạnh"
-    elif t_rsi < 40: rsi_status = "Yếu"
+        for k in t:
+            if k in trinity_data:
+                t[k] = trinity_data[k]
 
-    # Reason String
-    reason_str = ""
-    if t_reasons:
-        reason_lines = [f"• {r}" for r in t_reasons]
-        reason_str = "\n📝 **LÝ DO KHUYẾN NGHỊ:**\n" + "\n".join(reason_lines) + "\n"
+    # ════════════════════════════════════════════════════════
+    # SECTION 1: CẤU TRÚC & MẪU HÌNH
+    # ════════════════════════════════════════════════════════
+    if "UPTREND" in t['trend']:
+        trend_line = "📈 Xu hướng: Tăng trung hạn"
+    elif "DOWNTREND" in t['trend']:
+        trend_line = "📉 Xu hướng: Giảm, đang điều chỉnh"
+    else:
+        trend_line = "🟡 Xu hướng: Đi ngang"
 
-    # --- EVALUATION LOGIC ---
-    evaluation = "Thị trường chưa rõ xu hướng."
-    action = "QUAN SÁT 🟡"
-    advice = f"Theo dõi vùng giá {price}"
-    
-    # Logic for Evaluation
-    if "MÚC" in t_signal or "DIAMOND" in t_signal:
-        evaluation = "Dòng tiền vào mạnh, xu hướng tăng được xác nhận."
-        action = "MUA MARGIN 🚀" if "DIAMOND" in t_signal else "MUA GIA TĂNG 🟢"
-        advice = f"Mục tiêu ngắn hạn: {t_res:,.0f}. Cắt lỗ nếu thủng {t_support:,.0f}."
-    elif "SỚM" in t_signal:
-        evaluation = "Có tín hiệu bắt đáy nhưng rủi ro còn cao."
-        action = "MUA THĂM DÒ 🔵"
-        advice = "Chỉ đi lệnh nhỏ (10-20% NAV). Chờ xác nhận thêm."
-    elif "BÁN" in t_signal:
-        evaluation = "Gãy xu hướng hoặc chạm kháng cự mạnh."
-        action = "BÁN NGAY 🔴"
-        advice = "Bảo toàn lợi nhuận, không bắt dao rơi."
-    elif "MẠNH TĂNG" in t_adx_status:
-         evaluation = "Xu hướng tăng đang rất khỏe."
-         action = "NẮM GIỮ 🟢"
-         advice = "Gồng lãi tiếp, chưa có dấu hiệu đảo chiều."
-    elif "MẠNH GIẢM" in t_adx_status:
-        evaluation = "Xu hướng giảm đang chiếm ưu thế."
-        action = "QUAN SÁT 🟡"
-        advice = f"Kiên nhẫn chờ giá về vùng hỗ trợ {t_support:,.0f}."
+    ema_line = ""
+    if t['ema_aligned'] == "BULL":
+        ema_line = "\n- 📊 EMA: Sóng tăng (20>50>144>233)"
+    elif t['ema_aligned'] == "BEAR":
+        ema_line = "\n- 📊 EMA: Xếp giảm — cẩn trọng"
 
-    # Construct Message
-    # Data from Vnstock (Daily/Static)
+    st_line = "Supertrend ✅ Tăng" if t['supertrend_dir'] > 0 else "Supertrend ⚠️ Giảm"
+
+    wyckoff_line = ""
+    if t['wyckoff_phase'] == "SOS":
+        wyckoff_line = "\n- 💎 Wyckoff SOS: Breakout tích lũy, Smart Money xác nhận"
+    elif t['wyckoff_phase'] == "SPRING":
+        wyckoff_line = "\n- 🟢 Wyckoff SPRING: Rũ bỏ thành công, cơ hội mua"
+    elif t['wyckoff_phase'] == "SOW":
+        wyckoff_line = "\n- 🔴 Wyckoff SOW: Phân phối, Smart Money rút"
+    elif t['wyckoff_phase'] == "UPTHRUST":
+        wyckoff_line = "\n- 🔴 Wyckoff UPTHRUST: Bẫy tăng giá"
+
+    # ════════════════════════════════════════════════════════
+    # SECTION 2: DÒNG TIỀN & CHỈ BÁO
+    # ════════════════════════════════════════════════════════
+    rsi = t['rsi']
+    if rsi > 70:   rsi_line = f"🔴 RSI: {rsi:.1f} — Quá mua, cẩn thận"
+    elif rsi > 60: rsi_line = f"🟢 RSI: {rsi:.1f} — Mạnh"
+    elif rsi > 40: rsi_line = f"🟡 RSI: {rsi:.1f} — Trung tính"
+    elif rsi > 30: rsi_line = f"🟡 RSI: {rsi:.1f} — Yếu"
+    else:          rsi_line = f"🟢 RSI: {rsi:.1f} — Quá bán, cơ hội"
+
+    cmf = t['cmf']
+    if cmf > 0.1:   cmf_line = f"🟢 CMF: {cmf:.3f} — Dòng tiền VÀO MẠNH"
+    elif cmf > 0:    cmf_line = f"🟢 CMF: {cmf:.3f} — Dòng tiền vào nhẹ"
+    elif cmf > -0.1: cmf_line = f"🔴 CMF: {cmf:.3f} — Dòng tiền ra nhẹ"
+    else:            cmf_line = f"🔴 CMF: {cmf:.3f} — Dòng tiền RA MẠNH"
+
+    macd_line = "🟢 MACD: Momentum tăng" if t['macd_hist'] > 0 else "🔴 MACD: Momentum giảm"
+
+    vsa_line = "Bình thường"
+    if t['vol_climax']: vsa_line = "💥 VOL CLIMAX — Đột biến khối lượng"
+    elif t['shakeout']: vsa_line = "🔄 SHAKEOUT — Rũ bỏ, Smart Money gom?"
+
+    trap_lines = ""
+    if t['pump_dump_risk']:
+        trap_lines += "\n⛔ P&D Risk: RSI cực + Vol đột biến + giá spike"
+    if t['exhaustion_top']:
+        trap_lines += "\n⚠️ Đỉnh Cạn: RSI divergence — giá mới nhưng RSI yếu"
+
+    # ════════════════════════════════════════════════════════
+    # SECTION 3: CHIẾN LƯỢC / HÀNH ĐỘNG
+    # ════════════════════════════════════════════════════════
+    atr_val = t['atr'] if t['atr'] > 0 else price * 0.02
+    tp1 = price + atr_val * 1.5
+    tp2 = price + atr_val * 3
+    sl = t['trailing_stop'] if t['trailing_stop'] > 0 else (price - atr_val * 2)
+    sl_pct = abs((price - sl) / price * 100) if price > 0 else 0
+
+    rating = t['rating']
+    score = t['score']
+
+    if "MUA MẠNH" in rating:
+        strategy = (
+            "💰 Vị thế MUA MỚI (Tiền mặt):\n"
+            f"  + Điều kiện: Giá giữ trên {t['ema20']:,.0f} + volume\n"
+            f"  + Hoặc hồi về {t['support']:,.0f}\n"
+            "  + Kế hoạch: Chia 3 phần, không all-in\n"
+            "\n"
+            "📈 Vị thế ĐANG CẦM HÀNG:\n"
+            "  ✅ Giữ/Gia tăng: Xu hướng mạnh\n"
+            f"  🟡 Chốt lời 1 phần (30-50%): Chạm {tp1:,.0f}\n"
+            f"  🔴 Thoát hết: Gãy mức {sl:,.0f}"
+        )
+    elif "MUA THĂM DÒ" in rating:
+        strategy = (
+            "💰 Vị thế MUA MỚI:\n"
+            "  + Chỉ thăm dò 10-20% NAV\n"
+            f"  + Điều kiện: Vượt {t['ema20']:,.0f} + volume tăng\n"
+            "\n"
+            "📈 ĐANG CẦM HÀNG:\n"
+            f"  ✅ Giữ | 🟡 Chốt: {t['resistance']:,.0f}\n"
+            f"  🔴 Cắt lỗ: {sl:,.0f}"
+        )
+    elif "BÁN" in t['signal'] or "KHÔNG MUA" in rating:
+        strategy = (
+            "⛔ KHÔNG MUA MỚI\n"
+            "\n"
+            "📉 ĐANG CẦM HÀNG:\n"
+            f"  🔴 CHỐT LỜI / CẮT LỖ: {sl:,.0f}\n"
+            "  + Không bắt dao rơi"
+        )
+    elif "MẠNH TĂNG" in t['adx_status']:
+        strategy = (
+            f"💰 MUA khi hồi về {t['ema20']:,.0f}\n"
+            f"  + Hoặc breakout {t['resistance']:,.0f}\n"
+            "📈 ĐANG CẦM: ✅ GIỮ — Gồng lãi"
+        )
+    elif "MẠNH GIẢM" in t['adx_status']:
+        strategy = (
+            "⛔ KHÔNG MUA (Downtrend mạnh)\n"
+            f"📉 ĐANG CẦM: 🔴 Hạ tỷ trọng\n"
+            f"  + Thoát nếu gãy {t['support']:,.0f}"
+        )
+    else:
+        strategy = (
+            "🟡 QUAN SÁT — Chờ xác nhận\n"
+            f"  + Break {t['resistance']:,.0f} → MUA\n"
+            f"  + Test {t['support']:,.0f} → Chờ"
+        )
+
+    tp_block = ""
+    if "MUA" in rating:
+        tp_block = (
+            f"\n🎯 TP Ladder:\n"
+            f"  + TP1: {tp1:,.0f} (chốt 30-40%)\n"
+            f"  + TP2: {tp2:,.0f} (chốt 30-40%)\n"
+            f"  + TP3: Trailing stop\n"
+        )
+
+    risk_block = (
+        f"\n⚠️ QLRR:\n"
+        f"  + SL: {sl:,.0f} (-{sl_pct:.1f}%)\n"
+        f"  + Trailing: {t['trailing_stop']:,.0f}\n"
+        f"  + Time-stop: Giằng co >10 phiên"
+    )
+
+    # ════════════════════════════════════════════════════════
+    # SECTION 4: QUALITY GATE
+    # ════════════════════════════════════════════════════════
+    pros = []
+    cons = []
+
+    if t['cmf'] > 0: pros.append("CMF dương")
+    if t['macd_hist'] > 0: pros.append("MACD dương")
+    if t['supertrend_dir'] > 0: pros.append("Supertrend tăng")
+    if t['ema_aligned'] == "BULL": pros.append("EMA sóng tăng")
+    if t['wyckoff_phase'] in ("SOS", "SPRING"): pros.append(f"Wyckoff {t['wyckoff_phase']}")
+    if 50 < rsi < 70: pros.append("RSI mạnh")
+    if t['adx'] > 25 and t['is_bullish']: pros.append(f"ADX {t['adx']:.0f}")
+    if t['vol_climax']: pros.append("Vol Climax")
+
+    if t['cmf'] < 0: cons.append("CMF âm")
+    if t['macd_hist'] < 0: cons.append("MACD âm")
+    if t['supertrend_dir'] < 0: cons.append("Supertrend giảm")
+    if rsi > 70: cons.append("RSI quá mua")
+    if rsi < 30: cons.append("RSI quá bán")
+    if t['wyckoff_phase'] in ("SOW", "UPTHRUST"): cons.append(f"Wyckoff {t['wyckoff_phase']}")
+    if t['pump_dump_risk']: cons.append("Nghi P&D")
+    if t['exhaustion_top']: cons.append("Đỉnh cạn")
+    if t['ema_aligned'] == "BEAR": cons.append("EMA giảm")
+
+    n_pro = len(pros)
+    n_con = len(cons)
+    if n_pro >= 4 and n_con <= 1:
+        verdict = '✅ "Ưu tiên giữ/mua" — Đa số chỉ báo ủng hộ'
+    elif n_pro >= 2 and n_con <= 2:
+        verdict = '🟡 "Quan sát thêm" — Tín hiệu chưa đồng thuận'
+    else:
+        verdict = '🔴 "Cẩn trọng" — Nhiều cảnh báo, hạn chế rủi ro'
+
+    pro_text = ", ".join(pros[:4]) if pros else "(Không có)"
+    con_text = ", ".join(cons[:4]) if cons else "(Không có)"
+
+    # ════════════════════════════════════════════════════════
+    # ASSEMBLE MESSAGE
+    # ════════════════════════════════════════════════════════
     d_vol_avg = data.get('avg_vol_5d', 0)
+    vol_ratio = total_vol / d_vol_avg if d_vol_avg > 0 else 0
 
     msg = (
-        f"🔥 **TRINITY SCAN: {stock_id}** (Khung H1)\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 PHÂN TÍCH CHUYÊN SÂU {stock_id} (1D)\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🕒 `{log_time}` | 💰 `{price:,.2f}` ({change_pc:+.2f}%) {trend_icon}\n"
-        f"📊 **Vol**: `{total_vol/1e6:.1f}M` (TB5D: `{d_vol_avg/1e6:.1f}M`){shark_msg}\n"
-        f"---------------------------------\n"
-        f"📊 **TRẠNG THÁI:**\n"
-        f"• Xu hướng: {t_trend} (ADX: `{t_adx:.1f}`)\n"
-        f"• RSI: `{t_rsi:.1f}` ({rsi_status})\n"
-        f"• Tín hiệu: {t_signal if t_signal else 'Không có'}\n"
-        f"• Cấu trúc: {t_structure}\n"
-        f"{reason_str}"
+        f"📊 Vol: `{total_vol/1e6:.1f}M` (TB: `{d_vol_avg/1e6:.1f}M` | `{vol_ratio:.1f}x`){shark_msg}\n"
         f"\n"
-        f"🛡️ **ĐÁNH GIÁ:**\n"
-        f"{evaluation}\n"
+        f"**1. 📈 CẤU TRÚC & MẪU HÌNH:**\n"
+        f"- {trend_line}\n"
+        f"- 📉 Cấu trúc: {t['structure']}{ema_line}{wyckoff_line}\n"
+        f"- 🔗 {st_line}\n"
         f"\n"
-        f"🎯 **HÀNH ĐỘNG:**\n"
-        f"👉 **{action}**\n"
+        f"**2. 📊 DÒNG TIỀN & CHỈ BÁO:**\n"
+        f"- 🔍 VSA: {vsa_line}\n"
+        f"- 📊 Indicator:\n"
+        f"  • {rsi_line}\n"
+        f"  • ADX: `{t['adx']:.1f}` ({t['adx_status']})\n"
+        f"  • {cmf_line}\n"
+        f"  • {macd_line}"
+    )
+    if trap_lines:
+        msg += f"\n🚨 CẢNH BÁO:{trap_lines}"
+
+    msg += (
+        f"\n\n"
+        f"**3. 🎯 CHIẾN LƯỢC / HÀNH ĐỘNG:**\n"
+        f"🎯 Rating: **{rating if rating else 'QUAN SÁT 🟡'}** (Score: {score})\n\n"
+        f"{strategy}\n"
+        f"{tp_block}"
+        f"{risk_block}\n"
         f"\n"
-        f"💡 *Lời khuyên:* {advice}"
+        f"**4. 🧠 QUALITY GATE:**\n"
+        f"- {n_pro} tín hiệu ủng hộ: {pro_text}\n"
+        f"- {n_con} tín hiệu cảnh báo: {con_text}\n"
+        f"- {verdict}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
             
     return msg
