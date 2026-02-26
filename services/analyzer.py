@@ -271,12 +271,15 @@ class TrinityAnalyzer:
             if rsi > 75:
                  return {'approved': False, 'reason': f"RSI Quá Mua ({rsi:.1f} > 75)", 'message': None}
 
-            # 5. Kill Switch 4: Volume Quality — Nổ khối lượng đột biến?
-            # User request: Giảm điều kiện volume xuống 1.5x (thay vì 2x hay bỏ hẳn)
+            # 5. Kill Switch 4: Volume Quality
+            # User request: MA5 Volume > 150k AND Current Volume >= 1.5x MA5 Volume
             vol_avg = analysis.get('vol_avg', 1)
             vol_cur = shark_payload.get('total_vol', 0)
-            rel_vol = vol_cur / vol_avg if vol_avg > 0 else 0
             
+            if vol_avg < 150000:
+                return {'approved': False, 'reason': f"Thanh khoản thấp (MA5 Vol: {vol_avg:,.0f} < 150k)", 'message': None}
+                
+            rel_vol = vol_cur / vol_avg if vol_avg > 0 else 0
             if rel_vol < 1.5 and not analysis.get('vol_climax'):
                 return {'approved': False, 'reason': f"Vol Chưa Đạt ({rel_vol:.1f}x < 1.5x)", 'message': None}
 
