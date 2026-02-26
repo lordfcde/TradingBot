@@ -80,25 +80,45 @@ def get_enriched_trinity_analysis(symbol, trinity_service, vnstock_service, shar
         except Exception as e:
             print(f"⚠️ Trinity check error: {e}")
 
-    # 2. Trinity Analyzer (Deep Analysis)
+    # 2. Trinity Analyzer (Deep Analysis — 1D)
     try:
         from services.analyzer import TrinityAnalyzer
-        # Initialize with shared service
         analyzer = TrinityAnalyzer(vnstock_service)
-        analyzer_result = analyzer.check_signal(symbol, timeframe="1D") # FORCE DAILY for /stock
+        analyzer_result = analyzer.check_signal(symbol, timeframe="1D")
         
-        if trinity_analysis is None:
-            trinity_analysis = analyzer_result
-        else:
-            # Merge logic
-            trinity_analysis['rating'] = analyzer_result.get('rating', 'WATCH')
-            
+        if analyzer_result:
+            if trinity_analysis is None:
+                # No 1H monitor result — use deep analysis directly
+                trinity_analysis = analyzer_result
+            else:
+                # Merge: keep 1H signal name, but overwrite ALL analytical fields
+                # from the deeper 1D analysis (these are the ones used by format_stock_reply)
+                DEEP_FIELDS = [
+                    'rating', 'score', 'reasons',
+                    'vol_climax', 'shakeout',
+                    'wyckoff_phase', 'ema_aligned',
+                    'rsi', 'cmf', 'macd_hist', 'chaikin', 'prev_chaikin',
+                    'adx', 'adx_status', 'is_bullish',
+                    'structure', 'support', 'resistance', 'vol_avg',
+                    'ema20', 'ema50', 'ema144', 'ema233',
+                    'supertrend', 'supertrend_dir', 'trend',
+                    'pump_dump_risk', 'exhaustion_top',
+                    'atr', 'trailing_stop',
+                ]
+                for field in DEEP_FIELDS:
+                    if field in analyzer_result:
+                        trinity_analysis[field] = analyzer_result[field]
+                # If 1H had no signal, use the 1D signal as well
+                if not trinity_analysis.get('signal'):
+                    trinity_analysis['signal'] = analyzer_result.get('signal', '')
+
     except Exception as e:
         print(f"⚠️ Analyzer error: {e}")
         if trinity_analysis:
             trinity_analysis['rating'] = 'UNKNOWN'
             
     return trinity_analysis
+
 
 def get_realtime_price_async(dnse_service, symbol, timeout=5.0):
     """
