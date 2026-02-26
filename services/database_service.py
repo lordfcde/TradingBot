@@ -3,6 +3,7 @@ import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
 import json
+import time
 from datetime import datetime, timezone, timedelta
 
 class DatabaseService:
@@ -116,4 +117,3 @@ class DatabaseService:
         query_watchlist = "DELETE FROM watchlist WHERE entry_time < %s;"
         cls.execute_query(query_watchlist, (seven_days_ago_ts,))
         print("✅ Database cleanup complete.")
-        return result
