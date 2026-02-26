@@ -262,7 +262,16 @@ if __name__ == "__main__":
     def health(): return "Bot Running 200 OK", 200
     
     def run_web():
-        port = int(os.environ.get("PORT", 8080))
+        # Check if running on Render (or similar platform that sets PORT)
+        if os.environ.get("RENDER", "false").lower() == "true":
+            logger.info("🌍 Starting in Webhook Mode (Render)")
+            # Render sets PORT env variable dynamically
+            port = int(os.environ.get("PORT", 8088)) # Changed fallback port to 8088
+            logger.info(f"🔌 Binding to port {port}")
+        else:
+            # Local development or other environments
+            port = 8088 # Default port for local
+            logger.info(f"🔌 Binding to local port {port}")
         app.run(host='0.0.0.0', port=port)
     
     threading.Thread(target=run_web, daemon=True).start()
