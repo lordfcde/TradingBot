@@ -183,7 +183,8 @@ class SharkHunterService:
             if not symbol: return
             
             # DEBUG: Print Symbol to verify stream
-            print(f"Tick received: {symbol}", end="\r")
+            # if symbol == 'FOX':
+            #     print(f"🦊 RAW FOX PAYLOAD: {payload}")
 
             # Time Check
             # Time Check (Strict Trading Hours)
@@ -198,34 +199,33 @@ class SharkHunterService:
                 return 
 
             # 2. End Time Check (15:00 - Stop scanning)
-            # Allow up to 15:15 for ATC/Run-off, then hard stop.
             if current_hm > "15:15":
-                # print(f"🛑 After Market Close (15:00). Tick ignored.", end="\r")
                 return
 
             # Value Extraction (Dictionary Compatible + Fallbacks)
-            raw_vol = int(
-                payload.get("matchQuantity", 0) or 
-                payload.get("matchVolume", 0) or 
-                payload.get("matchQtty", 0) or 
-                payload.get("lastVol", 0) or 
-                payload.get("vol", 0) or 0
-            )
-            # User Correction: Unit is already in shares/lots (No need to multiply by 100)
-            vol = raw_vol
-            # Extract Data
-            try:
-                # DEBUG: Print FULL PAYLOAD to see keys
-                # print(f"🔹 RAW PAYLOAD: {payload}") 
+            def safe_float(val, default=0.0):
+                if not val: return default
+                try: return float(val)
+                except (ValueError, TypeError): return default
 
-                price = float(payload.get("lastPrice", 0) or payload.get("matchPrice", 0) or payload.get("price", 0))
-                vol = float(payload.get("lastVol", 0) or payload.get("matchVol", 0) or payload.get("vol", 0) or payload.get("matchQuantity", 0))
-                
-                total_vol = float(payload.get("totalVolumeTraded", 0) or payload.get("accumulatedVol", 0) or 0) * 10
-                change_pc = float(payload.get("changedRatio", 0) or payload.get("changePc", 0) or 0)
-            except ValueError:
-                # If conversion fails (e.g. empty string), skip
-                return
+            def safe_int(val, default=0):
+                if not val: return default
+                try: return int(val)
+                except (ValueError, TypeError): return default
+
+            raw_vol = safe_int(
+                payload.get("matchQuantity") or 
+                payload.get("matchVolume") or 
+                payload.get("matchQtty") or 
+                payload.get("lastVol") or 
+                payload.get("vol")
+            )
+            vol = raw_vol
+            
+            # Extract Data
+            price = safe_float(payload.get("lastPrice") or payload.get("matchPrice") or payload.get("price"))
+            total_vol = safe_float(payload.get("totalVolumeTraded") or payload.get("accumulatedVol")) * 10
+            change_pc = safe_float(payload.get("changedRatio") or payload.get("changePc"))
 
             match_time_str = payload.get("time") # HH:mm:ss format often
 
@@ -313,6 +313,9 @@ class SharkHunterService:
 
 
             # DEBUG THRESHOLD
+            if order_value > 100_000_000:
+                print(f"🔹 TICK: {symbol} | Rate: {price:,.0f} | Vol: {vol:,.0f} ({order_value/1e9:.2f} Tỷ)")
+
             if order_value < self.min_value:
                 return
 
