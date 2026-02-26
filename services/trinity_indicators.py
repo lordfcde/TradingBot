@@ -33,7 +33,7 @@ class TrinityLite:
     CHAIKIN_FAST  = 3
     CHAIKIN_SLOW  = 10
     VOL_AVG_LEN   = 20
-    VOL_CLIMAX_K  = 2.0
+    VOL_CLIMAX_K  = 1.5
     VOL_DRY_K     = 0.5
     SHAKEOUT_LOOK = 10
     SR_LOOKBACK   = 20
@@ -103,6 +103,12 @@ class TrinityLite:
         df['vol_avg'] = vol_sma
         df['vol_climax'] = df['volume'] > (self.VOL_CLIMAX_K * vol_sma_safe)
         df['vol_dry']    = df['volume'] < (self.VOL_DRY_K * vol_sma_safe)
+        # VSA Accumulation: moderate volume increase with bullish candle
+        df['vol_accumulation'] = (
+            (df['volume'] > vol_sma_safe * 1.2)
+            & (df['volume'] <= vol_sma_safe * self.VOL_CLIMAX_K)
+            & (df['close'] > df['open'])
+        )
 
         # ── 3b. MACD ────────────────────────────────────────
         macd = ta.macd(df['close'])
@@ -126,7 +132,7 @@ class TrinityLite:
             (df['low'] < prior_swing_low)
             & (df['close'] > df['open'])
             & (df['volume'] < vol_sma_safe * 1.5)  # Not massive selling volume
-            & (body > spread * 0.4)            # Strong body recovery
+            & (body > spread * 0.3)            # Body recovery (relaxed from 0.4)
             & (prior_swing_low > 0)
         )
 
@@ -390,6 +396,8 @@ class TrinityLite:
 
                 # Volume
                 'vol_climax': bool(last.get('vol_climax', False)),
+                'vol_dry': bool(last.get('vol_dry', False)),
+                'vol_accumulation': bool(last.get('vol_accumulation', False)),
                 'shakeout': bool(last.get('shakeout', False)),
                 'close': close,
                 'volume': safe_float(last.get('volume', 0)),

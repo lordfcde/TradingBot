@@ -80,18 +80,28 @@ def get_enriched_trinity_analysis(symbol, trinity_service, vnstock_service, shar
         except Exception as e:
             print(f"⚠️ Trinity check error: {e}")
 
-    # 2. Trinity Analyzer (Deep Analysis)
+    # 2. Trinity Analyzer (Deep Analysis — 1D)
     try:
         from services.analyzer import TrinityAnalyzer
-        # Initialize with shared service
         analyzer = TrinityAnalyzer(vnstock_service)
-        analyzer_result = analyzer.check_signal(symbol, timeframe="1D") # FORCE DAILY for /stock
+        analyzer_result = analyzer.check_signal(symbol, timeframe="1D")
         
         if trinity_analysis is None:
+            # No fast signal — use deep analysis as-is
             trinity_analysis = analyzer_result
         else:
-            # Merge logic
-            trinity_analysis['rating'] = analyzer_result.get('rating', 'WATCH')
+            # FIX: Deep analyzer is the BASE (has vol_climax, shakeout, wyckoff, etc.)
+            # Fast monitor signal/signal_code overlays on top
+            fast_signal = trinity_analysis.get('signal', '')
+            fast_signal_code = trinity_analysis.get('signal_code', '')
+            
+            # Deep analyzer becomes the base result
+            trinity_analysis = analyzer_result
+            
+            # Overlay fast monitor signal if it found something
+            if fast_signal:
+                trinity_analysis['signal'] = fast_signal
+                trinity_analysis['signal_code'] = fast_signal_code
             
     except Exception as e:
         print(f"⚠️ Analyzer error: {e}")
@@ -169,6 +179,7 @@ def format_stock_reply(data, shark_service=None, trinity_data=None):
         'wyckoff_phase': 'NONE', 'ema_aligned': 'NONE', 'trailing_stop': 0,
         'atr': 0, 'supertrend_dir': 0, 'pump_dump_risk': False,
         'exhaustion_top': False, 'vol_climax': False, 'shakeout': False,
+        'vol_dry': False, 'vol_accumulation': False,
         'rating': '', 'score': 0, 'ema20': 0, 'ema50': 0, 'is_bullish': False
     }
     if trinity_data:
@@ -223,8 +234,10 @@ def format_stock_reply(data, shark_service=None, trinity_data=None):
     macd_line = "🟢 MACD: Momentum tăng" if t['macd_hist'] > 0 else "🔴 MACD: Momentum giảm"
 
     vsa_line = "Bình thường"
-    if t['vol_climax']: vsa_line = "💥 VOL CLIMAX — Đột biến khối lượng"
+    if t['vol_climax']: vsa_line = "💥 VOL CLIMAX — Đột biến khối lượng, Smart Money đổ vào"
     elif t['shakeout']: vsa_line = "🔄 SHAKEOUT — Rũ bỏ, Smart Money gom?"
+    elif t['vol_accumulation']: vsa_line = "📈 TÍCH LŨY — Volume tăng + nến tăng (gom hàng)"
+    elif t['vol_dry']: vsa_line = "📉 CẠN VOL — Thanh khoản thấp, chờ breakout"
 
     trap_lines = ""
     if t['pump_dump_risk']:

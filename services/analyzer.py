@@ -211,7 +211,12 @@ class TrinityAnalyzer:
                 'ema144':         summary.get('ema144', 0),
                 'ema233':         summary.get('ema233', 0),
                 'vol_climax':     summary.get('vol_climax', False),
+                'vol_dry':        summary.get('vol_dry', False),
+                'vol_accumulation': summary.get('vol_accumulation', False),
                 'shakeout':       summary.get('shakeout', False),
+                'macd_hist':      macd_hist,
+                'signal':         summary.get('signal', ''),
+                'signal_code':    summary.get('signal_code', ''),
                 'signal_buy':     summary.get('signal', None) is not None,
                 # Trinity Master Fields
                 'adx':            adx,
