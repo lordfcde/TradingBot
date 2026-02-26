@@ -330,7 +330,7 @@ class SharkHunterService:
 
             # ── A: Shark Pressure Window ─────────────────────────
             now_t = time.time()
-            if side == "Buy":
+            if side in ["Buy", "Unknown"]:
                 if symbol not in self.shark_pressure:
                     self.shark_pressure[symbol] = []
                 # Prune old timestamps outside window
@@ -354,10 +354,11 @@ class SharkHunterService:
                 return
 
             # ── Trigger Hybrid Analysis ──────────────────────────
-            # Requires: BUY side + pressure ≥2 (or first spike) + not lunch hour
-            if side == "Buy" and self.analyzer:
-                should_fire = (pressure_count >= self.PRESSURE_MIN) or \
-                              (order_value >= self.min_value * 3)  # Very large single order bypasses wait
+            # Requires: BUY/Unknown side + not lunch hour
+            if side in ["Buy", "Unknown"] and self.analyzer:
+                # Every >1B order triggers the hybrid analyzer to check the chart
+                # The cooldown (checked above) prevents spamming
+                should_fire = True 
                 if should_fire and not is_lunch:
                     self.alert_history[alert_key] = now
                     threading.Thread(
@@ -367,9 +368,7 @@ class SharkHunterService:
                     ).start()
                 elif is_lunch:
                     print(f"⏸️ {symbol} — Bỏ qua (giờ trưa 11:30-13:00)")
-                else:
-                    print(f"📈 {symbol} — Áp lực {pressure_count}/{self.PRESSURE_MIN} lệnh, chờ thêm...")
-            elif side == "Buy" and self.trinity_monitor:
+            elif side in ["Buy", "Unknown"] and self.trinity_monitor:
                 # Fallback
                 threading.Thread(target=self._check_trinity_signal, args=(symbol,), daemon=True).start()
 
@@ -635,7 +634,7 @@ class SharkHunterService:
             if result['approved']:
                 # Send BREAKOUT Alert (High Quality)
                 if self.alert_chat_id:
-                    self.bot.send_message(self.alert_chat_id, result['message'], parse_mode='Markdown')
+                    self.bot.send_message(self.alert_chat_id, result['message'], parse_mode='HTML')
                     print(f"🚀 BREAKOUT ALERT SENT: {symbol}")
                 
                 # Add to Watchlist

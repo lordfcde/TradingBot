@@ -21,7 +21,7 @@ from services.analyzer import TrinityAnalyzer
 
 # Handlers
 from handlers.stock_handler import handle_stock_price, handle_gold_price, handle_market_overview, handle_stock_search_request, handle_show_watchlist
-from handlers.menu_handler import send_welcome, handle_help, handle_contact, handle_vn_stock, handle_back_main, create_main_menu, handle_shark_menu
+from handlers.menu_handler import send_welcome, handle_help, handle_contact, handle_vn_stock, handle_back_main, create_main_menu
 
 # ==========================================
 # 1. SETUP LOGGING & BOT
@@ -208,13 +208,13 @@ def on_help(message):
 def on_stock(message):
     handle_stock_price(bot, message, dnse_service, shark_service, vnstock_service, trinity_monitor)
 
-@bot.message_handler(commands=['shark_on'])
-def on_shark_on(message):
+@bot.message_handler(commands=['test_report'])
+def on_test_report(message):
     chat_id = message.chat.id
-    shark_service.enable_alerts(chat_id)
-    # Manual trigger if inside session
-    scheduler.start_morning_session() # Force connect check
-    bot.reply_to(message, "🦈 **Shark Hunter & Trinity ON!**\nBot sẽ tự động chạy theo lịch trình:\n- Sáng: 08:50 - 11:30\n- Chiều: 13:00 - 15:05", parse_mode='Markdown')
+    shark_service.set_alert_chat_id(chat_id)
+    shark_service._send_daily_summary()
+    bot.reply_to(message, "✅ Đã gửi báo cáo cuối ngày (Test Mode).")
+
 
 @bot.message_handler(commands=['trinity_test'])
 def on_trinity_test(message):
@@ -241,10 +241,6 @@ def on_text(message):
     elif text == "🔎 Tra cứu Cổ phiếu": handle_stock_search_request(bot, message, dnse_service, shark_service, vnstock_service, trinity_monitor)
     elif text == "⭐ Watchlist": handle_show_watchlist(bot, message, watchlist_viewer)
     elif text == "🔙 Quay lại": handle_back_main(bot, message)
-    elif text == "🦈 Săn Cá Mập": handle_shark_menu(bot, message)
-    elif text == "✅ Bật Cảnh Báo": on_shark_on(message)
-    elif text == "📊 Thống Kê Hôm Nay": 
-        bot.send_message(message.chat.id, shark_service.get_stats_report(), parse_mode='Markdown')
     elif text == "ℹ️ Hướng dẫn / Help": handle_help(bot, message)
     elif text == "📞 Liên hệ Admin": handle_contact(bot, message)
     else: bot.reply_to(message, "Vui lòng chọn menu bên dưới. 👇", reply_markup=create_main_menu())
