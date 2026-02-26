@@ -272,10 +272,13 @@ class TrinityAnalyzer:
                  return {'approved': False, 'reason': f"RSI Quá Mua ({rsi:.1f} > 75)", 'message': None}
 
             # 5. Kill Switch 4: Volume Quality — Nổ khối lượng đột biến?
-            # [USER REQUESTED DANGEROUS OVERRIDE]: Bỏ hoàn toàn ràng buộc khối lượng
+            # User request: Giảm điều kiện volume xuống 1.5x (thay vì 2x hay bỏ hẳn)
             vol_avg = analysis.get('vol_avg', 1)
             vol_cur = shark_payload.get('total_vol', 0)
             rel_vol = vol_cur / vol_avg if vol_avg > 0 else 0
+            
+            if rel_vol < 1.5 and not analysis.get('vol_climax'):
+                return {'approved': False, 'reason': f"Vol Chưa Đạt ({rel_vol:.1f}x < 1.5x)", 'message': None}
 
             # 5b. Kill Switch 5: Trend Confirmation (Anti-Trap)
             close = analysis.get('close', 0)

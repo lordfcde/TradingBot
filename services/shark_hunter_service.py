@@ -601,7 +601,10 @@ class SharkHunterService:
             )
             self.bot.send_message(self.alert_chat_id, msg, parse_mode='HTML')
             print(f"📊 Post-market report sent ({len(buy_rows) if buy_rows else 0} BUY signals, {len(top_sharks)} sharks)")
-
+            
+            # Run Database Cleanup to maintain Free Tier Limits
+            DatabaseService.cleanup_old_records()
+            
         except Exception as e:
             print(f"❌ Daily summary error: {e}")
 

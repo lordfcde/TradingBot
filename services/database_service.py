@@ -98,4 +98,22 @@ class DatabaseService:
         finally:
             cls.release_connection(conn)
             
+    @classmethod
+    def cleanup_old_records(cls):
+        """
+        Maintains database size to stay within Render's 1GB free tier limit.
+        Deletes `watchlist_history` older than 30 days and `watchlist` older than 7 days.
+        """
+        print("🧹 Running database cleanup...")
+        thirty_days_ago = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
+        seven_days_ago_ts = time.time() - (7 * 24 * 60 * 60)
+        
+        # 1. Clean history (Keep only last 30 days of top symbols)
+        query_history = "DELETE FROM watchlist_history WHERE date < %s;"
+        cls.execute_query(query_history, (thirty_days_ago,))
+        
+        # 2. Clean active watchlist (fallback cleanup for items older than 7 days)
+        query_watchlist = "DELETE FROM watchlist WHERE entry_time < %s;"
+        cls.execute_query(query_watchlist, (seven_days_ago_ts,))
+        print("✅ Database cleanup complete.")
         return result
