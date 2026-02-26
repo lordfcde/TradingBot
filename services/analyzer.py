@@ -272,15 +272,10 @@ class TrinityAnalyzer:
                  return {'approved': False, 'reason': f"RSI Quá Mua ({rsi:.1f} > 75)", 'message': None}
 
             # 5. Kill Switch 4: Volume Quality — Nổ khối lượng đột biến?
+            # [USER REQUESTED DANGEROUS OVERRIDE]: Bỏ hoàn toàn ràng buộc khối lượng
             vol_avg = analysis.get('vol_avg', 1)
             vol_cur = shark_payload.get('total_vol', 0)
-            if analysis.get('vol_dry'):
-                return {'approved': False, 'reason': "Volume Cạn Kiệt (Dry)", 'message': None}
-
-            # Kill Switch 4b: Relative volume ≥ 200% MA20 — yêu cầu nổ vol thực sự
             rel_vol = vol_cur / vol_avg if vol_avg > 0 else 0
-            if rel_vol < 2.0 and not analysis.get('vol_climax'):
-                return {'approved': False, 'reason': f"Vol Bình Thường ({rel_vol:.1f}x < 2x) — Chưa nổ", 'message': None}
 
             # 5b. Kill Switch 5: Trend Confirmation (Anti-Trap)
             close = analysis.get('close', 0)

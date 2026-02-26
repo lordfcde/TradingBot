@@ -14,7 +14,7 @@ CONFIG_FILE = "scanner_config.json"
 STATS_FILE = "shark_stats.json"
 
 # Default Constants (Fallback)
-DEFAULT_MIN_VALUE = 1_000_000_000  # 1 Billion VND (Production)
+DEFAULT_MIN_VALUE = 1_500_000_000  # 1.5 Billion VND (Production)
 DEFAULT_COOLDOWN = 60
 DEFAULT_START_TIME = "09:00"  # Market opens at 9:00 AM
 MAINTENANCE_INTERVAL = 60
