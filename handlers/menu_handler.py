@@ -14,17 +14,6 @@ def create_main_menu():
     )
     return markup
 
-def create_shark_menu():
-    """Tạo bàn phím menu Cá Mập (Level 2)"""
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    
-    markup.add(
-        types.KeyboardButton("✅ Bật Cảnh Báo"),
-        types.KeyboardButton("📊 Thống Kê Hôm Nay")
-    )
-    markup.add(types.KeyboardButton("🔙 Quay lại"))
-    
-    return markup
 
 def create_stock_menu():
     """Tạo bàn phím menu Cổ Phiếu (Level 2)"""
@@ -81,14 +70,6 @@ def handle_vn_stock(bot, message):
         parse_mode="Markdown"
     )
 
-def handle_shark_menu(bot, message):
-    """Chuyển sang Menu Cá Mập"""
-    bot.send_message(
-        message.chat.id,
-        "🦈 **Săn Cá Mập (Big Shark)**\nChọn chức năng bên dưới:",
-        reply_markup=create_shark_menu(),
-        parse_mode="Markdown"
-    )
 
 def handle_back_main(bot, message):
     """Quay lại Menu Chính"""

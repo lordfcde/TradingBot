@@ -80,45 +80,25 @@ def get_enriched_trinity_analysis(symbol, trinity_service, vnstock_service, shar
         except Exception as e:
             print(f"⚠️ Trinity check error: {e}")
 
-    # 2. Trinity Analyzer (Deep Analysis — 1D)
+    # 2. Trinity Analyzer (Deep Analysis)
     try:
         from services.analyzer import TrinityAnalyzer
+        # Initialize with shared service
         analyzer = TrinityAnalyzer(vnstock_service)
-        analyzer_result = analyzer.check_signal(symbol, timeframe="1D")
+        analyzer_result = analyzer.check_signal(symbol, timeframe="1D") # FORCE DAILY for /stock
         
-        if analyzer_result:
-            if trinity_analysis is None:
-                # No 1H monitor result — use deep analysis directly
-                trinity_analysis = analyzer_result
-            else:
-                # Merge: keep 1H signal name, but overwrite ALL analytical fields
-                # from the deeper 1D analysis (these are the ones used by format_stock_reply)
-                DEEP_FIELDS = [
-                    'rating', 'score', 'reasons',
-                    'vol_climax', 'shakeout',
-                    'wyckoff_phase', 'ema_aligned',
-                    'rsi', 'cmf', 'macd_hist', 'chaikin', 'prev_chaikin',
-                    'adx', 'adx_status', 'is_bullish',
-                    'structure', 'support', 'resistance', 'vol_avg',
-                    'ema20', 'ema50', 'ema144', 'ema233',
-                    'supertrend', 'supertrend_dir', 'trend',
-                    'pump_dump_risk', 'exhaustion_top',
-                    'atr', 'trailing_stop',
-                ]
-                for field in DEEP_FIELDS:
-                    if field in analyzer_result:
-                        trinity_analysis[field] = analyzer_result[field]
-                # If 1H had no signal, use the 1D signal as well
-                if not trinity_analysis.get('signal'):
-                    trinity_analysis['signal'] = analyzer_result.get('signal', '')
-
+        if trinity_analysis is None:
+            trinity_analysis = analyzer_result
+        else:
+            # Merge logic
+            trinity_analysis['rating'] = analyzer_result.get('rating', 'WATCH')
+            
     except Exception as e:
         print(f"⚠️ Analyzer error: {e}")
         if trinity_analysis:
             trinity_analysis['rating'] = 'UNKNOWN'
             
     return trinity_analysis
-
 
 def get_realtime_price_async(dnse_service, symbol, timeout=5.0):
     """
@@ -413,78 +393,60 @@ def format_stock_reply(data, shark_service=None, trinity_data=None):
     return msg
 
 def handle_stock_price(bot, message, dnse_service, shark_service=None, vnstock_service=None, trinity_service=None):
-    """Xử lý lệnh /stock — Professional Analysis v2.0"""
+    """Xử lý lệnh /stock (Updated to match Search logic)"""
     try:
-        parts = message.text.split()
-        if len(parts) < 2:
-            bot.reply_to(message, "⚠️ Vui lòng nhập mã cổ phiếu. Ví dụ: `/stock HPG`", parse_mode='Markdown')
-            return
-
-        symbol = parts[1].upper().strip()
-
-        if not symbol.isalnum() or len(symbol) > 6:
-            bot.reply_to(message, "⚠️ Mã cổ phiếu không hợp lệ.")
-            return
-
+        symbol = message.text.split()[1].upper()
+        # print(f"User requested stock: {symbol}")
+        
+        # Send "Searching..." message
         msg_wait = bot.send_message(message.chat.id, f"🔍 Đang phân tích kỹ thuật {symbol}...", parse_mode='Markdown')
-
-        # 1. Fetch data (MQTT priority, fallback Vnstock)
-        enriched_data = None
-        mqtt_data = get_realtime_price_async(dnse_service, symbol)
-
-        if mqtt_data:
-            enriched_data = mqtt_data
-            if vnstock_service:
-                try:
-                    vn_data = vnstock_service.get_stock_info(symbol)
-                    if vn_data:
-                        enriched_data['industry'] = vn_data.get('industry')
-                        enriched_data['avg_vol_5d'] = vn_data.get('avg_vol_5d')
-                        enriched_data['rsi'] = vn_data.get('rsi')
-                except:
-                    pass
-        elif vnstock_service:
-            enriched_data = vnstock_service.get_stock_info(symbol)
-
+        
+        # 1. Fetch Realtime Data
+        enriched_data = vnstock_service.get_stock_info(symbol)
         if not enriched_data:
-            bot.edit_message_text(f"❌ Không tìm thấy mã **{symbol}**.", chat_id=message.chat.id, message_id=msg_wait.message_id, parse_mode='Markdown')
-            return
+             bot.edit_message_text("❌ Không tìm thấy mã này.", chat_id=message.chat.id, message_id=msg_wait.message_id)
+             return
 
-        # 2. RSI Watchlist check
-        if shark_service and enriched_data.get('rsi') is not None:
-            added = shark_service.check_rsi_watchlist(
-                symbol,
-                enriched_data.get('rsi'),
-                enriched_data.get('totalVolumeTraded', 0),
-                enriched_data.get('avg_vol_5d', 0)
-            )
-            if added:
-                bot.send_message(message.chat.id, f"🔔 **{symbol}** đã được thêm vào Watchlist (RSI + Vol đột biến)!", parse_mode='Markdown')
-
-        # 3. Trinity Deep Analysis (1D)
+        # 2. Trinity Analysis
+        # Ensure we pass the enriched data to Trinity calculator if possible, 
+        # but TrinityAnalyzer largely fetches its own data.
+        # Check get_enriched_trinity_analysis implementation.
+        
         trinity_analysis_result = get_enriched_trinity_analysis(
-            symbol, trinity_service, vnstock_service,
+            symbol, trinity_service, vnstock_service, 
             shark_service, bot, message.chat.id
         )
-
-        # Enrich avg_vol_5d if missing
-        if enriched_data.get('avg_vol_5d') in (0, None) and trinity_analysis_result:
+        
+        # DEBUG: Print keys to see what we got
+        # print(f"DEBUG TRINITY KEYS: {trinity_analysis_result.keys()}")
+        
+        # get_enriched_trinity_analysis returns a DICT.
+        # STRUCTURE CONFIRMATION NEEDED. 
+        # Typically it returns: { 'enriched_data': ..., 'trend': ..., 'adx': ... }
+        # IF IT DOES NOT return 'enriched_data' inside, we must rely on 'enriched_data' fetched in step 1.
+        
+        # Let's inspect 'trinity_analysis_result'. 
+        # If it contains flat keys like 'trend', 'adx_status', we pass it as 'trinity_data'.
+        
+        # FIX: The previous code was passing 'trinity_analysis['enriched_data']' which might fail 
+        # if the key didn't exist, causing the entire block to crash or return empty?
+        # Actually the previous code (before I touched it) was working.
+        # My recent change:
+        # analysis = get_enriched_trinity_analysis(...)
+        # reply_msg = format_stock_reply(enriched_data, shark_service, analysis)
+        
+        # ISSUE: 'enriched_data' passed to format_stock_reply MUST contain 'avg_vol_5d'.
+        # vnstock_service.get_stock_info returns it.
+        # Check if 'avg_vol_5d' is 0 or None.
+        
+        if enriched_data.get('avg_vol_5d') == 0:
+            # Try to populate it from Trinity Analysis if available
             if trinity_analysis_result.get('vol_avg'):
-                enriched_data['avg_vol_5d'] = trinity_analysis_result['vol_avg']
-
-        # 4. Format & Send
+                enriched_data['avg_vol_5d'] = trinity_analysis_result.get('vol_avg')
+        
         reply_msg = format_stock_reply(enriched_data, shark_service, trinity_analysis_result)
         bot.delete_message(chat_id=message.chat.id, message_id=msg_wait.message_id)
         bot.send_message(message.chat.id, reply_msg, parse_mode='Markdown')
-
-    except IndexError:
-        bot.reply_to(message, "⚠️ Vui lòng nhập mã cổ phiếu. Ví dụ: /stock HPG")
-    except Exception as e:
-        print(f"Stock Handler Error: {e}")
-        import traceback
-        traceback.print_exc()
-        bot.reply_to(message, "❌ Lỗi hệ thống khi lấy dữ liệu.")
-
         
     except IndexError:
         bot.reply_to(message, "⚠️ Vui lòng nhập mã cổ phiếu. Ví dụ: /stock HPG")
@@ -492,7 +454,76 @@ def handle_stock_price(bot, message, dnse_service, shark_service=None, vnstock_s
         print(f"Stock Handler Error: {e}")
         import traceback
         traceback.print_exc()
-        bot.reply_to(message, "❌ Lỗi hệ thống khi lấy dữ liệu.")
+        bot.send_message(message.chat.id, "❌ Lỗi hệ thống khi lấy dữ liệu.")
+        parts = message.text.split()
+        if len(parts) < 2:
+            bot.reply_to(message, "⚠️ Vui lòng nhập mã cổ phiếu. Ví dụ: `/stock HPG`", parse_mode='Markdown')
+            return
+            
+        symbol = parts[1].upper().strip()
+        
+        # Validation checks
+        if not symbol.isalnum() or len(symbol) > 6:
+            bot.reply_to(message, "⚠️ Mã cổ phiếu không hợp lệ.")
+            return
+
+        msg_wait = bot.reply_to(message, f"⏳ Đang tải dữ liệu **{symbol}** (MQTT)...", parse_mode='Markdown')
+        
+        # 1. Fetch Real-time Data (MQTT) - Priority
+        mqtt_data = get_realtime_price_async(dnse_service, symbol)
+        
+        # 2. Enrich with Vnstock (History/Context)
+        enriched_data = {}
+        if mqtt_data:
+            enriched_data = mqtt_data
+            # Initialize vnstock helper if available to get extra info
+            if vnstock_service:
+                try:
+                    # We utilize vnstock just for Static/History info (Industry, AvgVol, RSI)
+                    # Implementation detail: vnstock_service.get_stock_info does full fetch,
+                    # but we can overwrite price with MQTT_data.
+                    # Or better: Add a specific enrichment method in vnstock_service.
+                    # For now, we reuse get_stock_info but prioritize MQTT fields.
+                    vn_data = vnstock_service.get_stock_info(symbol)
+                    if vn_data:
+                        # Merge: Keep MQTT price/vol, take Industry/AvgVol from Vnstock
+                        enriched_data['industry'] = vn_data.get('industry')
+                        enriched_data['avg_vol_5d'] = vn_data.get('avg_vol_5d')
+                        enriched_data['rsi'] = vn_data.get('rsi')
+                except:
+                    pass
+        elif vnstock_service:
+            # Fallback to pure Vnstock if MQTT fails
+            print(f"⚠️ MQTT failed for {symbol}, falling back to Vnstock HTTP.")
+            enriched_data = vnstock_service.get_stock_info(symbol)
+        
+        if enriched_data:
+            # Check RSI Watchlist (using enriched data)
+            if shark_service and enriched_data.get('rsi') is not None:
+                added = shark_service.check_rsi_watchlist(
+                    symbol, 
+                    enriched_data.get('rsi'), 
+                    enriched_data.get('totalVolumeTraded', 0), 
+                    enriched_data.get('avg_vol_5d', 0)
+                )
+                if added:
+                    bot.send_message(message.chat.id, f"🔔 **{symbol}** đã được thêm vào Watchlist (RSI + Vol đột biến)!", parse_mode='Markdown')
+
+            # Unified Analysis Logic
+            trinity_analysis = get_enriched_trinity_analysis(
+                symbol, trinity_service, vnstock_service, 
+                shark_service, bot, message.chat.id
+            )
+
+            reply_msg = format_stock_reply(enriched_data, shark_service, trinity_analysis)
+            bot.delete_message(chat_id=message.chat.id, message_id=msg_wait.message_id)
+            bot.send_message(message.chat.id, reply_msg, parse_mode='Markdown')
+        else:
+             bot.edit_message_text(f"❌ Không tìm thấy mã **{symbol}** (Kiểm tra lại kết nối/mã).", chat_id=message.chat.id, message_id=msg_wait.message_id, parse_mode='Markdown')
+
+    except Exception as e:
+        print(f"Stock Error: {e}")
+        bot.reply_to(message, "❌ Lỗi hệ thống.")
 
 def handle_stock_search_request(bot, message, dnse_service=None, shark_service=None, vnstock_service=None, trinity_service=None):
     """
