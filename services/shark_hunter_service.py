@@ -349,9 +349,15 @@ class SharkHunterService:
             # ── Cooldown per symbol/side ─────────────────────────
             now = time.time()
             alert_key = f"{symbol}_{side}"
-            last_alert = self.alert_history.get(alert_key, 0)
-            if now - last_alert < self.cooldown:
-                return
+            
+            with self.lock:
+                last_alert = self.alert_history.get(alert_key, 0)
+                if now - last_alert < self.cooldown:
+                    return
+                
+                # Pre-emptively update cooldown inside lock to prevent race conditions
+                # (Will be overwritten with exact time if it fires)
+                self.alert_history[alert_key] = now
 
             # ── Trigger Hybrid Analysis ──────────────────────────
             # Requires: BUY/Unknown side + not lunch hour
@@ -360,7 +366,8 @@ class SharkHunterService:
                 # The cooldown (checked above) prevents spamming
                 should_fire = True 
                 if should_fire and not is_lunch:
-                    self.alert_history[alert_key] = now
+                    self.alert_history[alert_key] = time.time() # Update precise time
+
                     threading.Thread(
                         target=self._run_hybrid_analysis,
                         args=(symbol, real_price, change_pc, total_vol, order_value, vol, side),
